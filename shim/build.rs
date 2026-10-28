@@ -14,9 +14,7 @@ fn main() {
     // Header the generated file carries so nobody mistakes generic stubs for
     // real ABI: unhandled exports take no arguments and only trace + handle.
     let mut gen = String::from(
-        "// GENERATED STUBS: exports not handled below take no arguments and \n"
-        "// return the shim's generic message handle. Do not rely on their \n"
-        "// signatures; add a hand-written arm here when a game calls one for real.\n",
+        "// GENERATED STUBS: exports not handled below take no arguments and\n// return the shim's generic message handle. Do not rely on their\n// signatures; add a hand-written arm here when a game calls one for real.\n",
     );
     for n in &names {
         match n.as_str() {
