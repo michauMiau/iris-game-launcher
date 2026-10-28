@@ -33,6 +33,7 @@ fn capture_output_flags_graphics_failure() {
         .unwrap_or(false));
 }
 
+#[cfg(not(target_os = "windows"))]
 #[test]
 fn capture_output_flags_prefix_version_mismatch() {
     // Proton's prefix-version complaint must surface as the "prefix" advice
@@ -203,6 +204,7 @@ fn update_check_says_available_or_none() {
     assert!(update_verdict(&g, 0).starts_with("no store channels"));
 }
 
+#[cfg(not(target_os = "windows"))]
 #[test]
 fn data_folder_finds_the_proton_user_dir() {
     let root = std::env::temp_dir().join(format!("iris-locallow-{}", std::process::id()));
@@ -231,6 +233,7 @@ fn data_folder_finds_the_proton_user_dir() {
 fn import_folder_finds_a_rip_and_refuses_a_twin() {
     let _guard = ENV_LOCK.lock().expect("env lock");
     let root = std::env::temp_dir().join(format!("iris-imp-{}", std::process::id()));
+    std::fs::remove_dir_all(&root).ok();
     std::env::set_var("XDG_DATA_HOME", &root);
     std::fs::create_dir_all(root.join("rip/stress-level-zero-inc-boneworks")).unwrap();
     std::fs::write(
@@ -262,8 +265,9 @@ fn import_folder_finds_a_rip_and_refuses_a_twin() {
 fn import_matches_a_folder_by_oculus_manifest_app_id() {
     let _guard = ENV_LOCK.lock().expect("env lock");
     let root = std::env::temp_dir().join(format!("iris-imp-match-{}", std::process::id()));
+    std::fs::remove_dir_all(&root).ok();
     std::env::set_var("XDG_DATA_HOME", &root);
-    let game = root.join("copy/bonelab");
+    let game = root.join("copy").join("bonelab");
     std::fs::create_dir_all(&game).unwrap();
     std::fs::write(game.join("BONELAB_Oculus_Windows64.exe"), b"exe").unwrap();
     std::fs::write(

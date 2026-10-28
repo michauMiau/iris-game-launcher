@@ -1,5 +1,6 @@
 use crate::*;
 
+#[cfg(not(target_os = "windows"))]
 #[test]
 fn pid_alive_tracks_a_real_process() {
     let mut child = std::process::Command::new("sleep")
@@ -25,6 +26,7 @@ fn pid_alive_tracks_a_real_process() {
     assert!(!pid_alive(pid));
 }
 
+#[cfg(not(target_os = "windows"))]
 #[test]
 fn running_flag_clears_when_the_process_ends() {
     let slot: Slot<String> = std::sync::Arc::new(std::sync::Mutex::new(None));

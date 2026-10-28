@@ -2079,6 +2079,12 @@ fn folder_name(name: &str) -> String {
 /// Long absolute paths look ugly in dropdowns. Keep the drive/root letter and
 /// the last two components: /home/user/.local/steam/steamapps/common becomes
 /// /h.../steamapps/common. Pure so it is unit-testable.
+/// Path string for equality comparisons: Windows displays backslashes while
+/// joined-arg strings may carry slashes, so normalize before comparing.
+fn norm_path(s: &str) -> String {
+    s.replace('\\', "/").to_lowercase()
+}
+
 fn short_path(p: &str) -> String {
     // Windows paths use '\', not MAIN_SEPARATOR-aware splitting: splitting a
     // Windows path there turned "C:\Steam\..." into "\C.../steamapps/common"
@@ -3820,7 +3826,7 @@ impl App {
             .store
             .apps
             .iter()
-            .any(|g| g.install_dir.eq_ignore_ascii_case(&text))
+            .any(|g| norm_path(&g.install_dir) == norm_path(&text))
         {
             self.status = "that folder is already in the library".into();
             return;
@@ -3919,7 +3925,7 @@ impl App {
             .store
             .apps
             .iter()
-            .any(|g| g.install_dir.eq_ignore_ascii_case(&text))
+            .any(|g| norm_path(&g.install_dir) == norm_path(&text))
         {
             self.status = "that folder is already in the library".into();
             return;
