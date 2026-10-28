@@ -11,6 +11,10 @@ Play all your bought games on Linux and Windows.
 Use your system resources for your games, not the launcher.
 </div>
 
+<div align="center">
+  <img src="assets/screenshot.png" alt="Iris Game Launcher library with curated games" width="760">
+</div>
+
 ## Is this project SLOP?
 
 While this project has been *vibecoded* (and I'm not proud of it), care has been taken to ensure this project is free of bugs, problems and regressions. 
