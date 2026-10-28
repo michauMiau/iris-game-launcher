@@ -474,6 +474,8 @@ enum DirTarget {
     Install,
     DownloadDir,
     PrefixDir,
+    #[cfg(not(target_os = "windows"))]
+    ProtonDirs,
     Import,
 }
 
@@ -4998,6 +5000,20 @@ impl App {
                         self.config.download_dir = text.clone();
                         self.save_config();
                     }
+                    #[cfg(not(target_os = "windows"))]
+                    DirTarget::ProtonDirs => {
+                        let line = text.clone();
+                        if !self.config.proton_dirs.iter().any(|d| d == &line) {
+                            self.config.proton_dirs.push(line.clone());
+                            self.save_config();
+                            self.status = i18n::fill(
+                                &tr(&self.config, "proton_dir_added"),
+                                &[("path", &short_path(&line))],
+                            );
+                        } else {
+                            self.status = tr(&self.config, "proton_dir_known");
+                        }
+                    }
                     DirTarget::PrefixDir => {
                         self.config.prefix_dir = text.clone();
                         self.save_config();
@@ -5587,7 +5603,10 @@ impl eframe::App for App {
             }
             egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
                 if settings {
+                    let sect_w = ui.available_width();
                     egui::Frame::group(ui.style()).show(ui, |ui| {
+                        ui.set_min_width(sect_w);
+                        ui.set_max_width(sect_w);
                         ui.label(tr(&self.config, "settings_appearance"));
                         ui.horizontal(|ui| {
                             // One dropdown per selector instead of a row of
@@ -5617,6 +5636,8 @@ impl eframe::App for App {
                         });
                     });
                     egui::Frame::group(ui.style()).show(ui, |ui| {
+                        ui.set_min_width(sect_w);
+                        ui.set_max_width(sect_w);
                         ui.label(tr(&self.config, "settings_folders"));
                         ui.label("Prefix dir:");
                         ui.horizontal(|ui| {
@@ -5688,6 +5709,8 @@ impl eframe::App for App {
                     });
                     #[cfg(not(target_os = "windows"))]
                     egui::Frame::group(ui.style()).show(ui, |ui| {
+                        ui.set_min_width(sect_w);
+                        ui.set_max_width(sect_w);
                         ui.label(tr(&self.config, "settings_proton"));
                         ui.label(tr(&self.config, "proton_dirs_hint"));
                             let joined = self.config.proton_dirs.join("\n");
@@ -5750,10 +5773,21 @@ impl eframe::App for App {
                                     "proton"
                                 }
                             ));
+                            if ui.button(tr(&self.config, "proton_pick_folder")).clicked() {
+                                let start = if !self.config.proton_dirs.is_empty() {
+                                    PathBuf::from(&self.config.proton_dirs[0])
+                                } else {
+                                    PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| "/".into()))
+                                };
+                                self.pick_dir(start, DirTarget::ProtonDirs);
+                            }
                     });
                         #[cfg(not(target_os = "windows"))]
                         egui::Frame::group(ui.style()).show(ui, |ui| {
+                        ui.set_min_width(sect_w);
+                        ui.set_max_width(sect_w);
                             ui.label(tr(&self.config, "proton_ge_hint"));
+                            ui.label(tr(&self.config, "proton_ge_reco"));
                             if ui.button("Choose a Proton version").clicked() {
                                 self.proton_popup = true;
                                 if self.proton_releases.is_empty() {
@@ -5762,6 +5796,8 @@ impl eframe::App for App {
                             }
                         });
                     egui::Frame::group(ui.style()).show(ui, |ui| {
+                        ui.set_min_width(sect_w);
+                        ui.set_max_width(sect_w);
                         ui.label(tr(&self.config, "settings_data"));
                         ui.label(format!("data root: {}", self.store_path.parent().unwrap_or(Path::new(".")).display()));
                         if ui.button("Save config").clicked() {
@@ -5779,12 +5815,11 @@ impl eframe::App for App {
                         }
                     });
                     egui::Frame::group(ui.style()).show(ui, |ui| {
+                        ui.set_min_width(sect_w);
+                        ui.set_max_width(sect_w);
                         ui.label(tr(&self.config, "login_header"));
-                        ui.label(tr(&self.config, "login_help_1"));
+                        ui.label(tr(&self.config, "login_step_1"));
                         ui.horizontal(|ui| {
-                            if ui.button(tr(&self.config, "login_btn")).clicked() {
-                                self.login_in_browser();
-                            }
                             #[cfg(target_os = "linux")]
                             {
                                 let owner = auth::handler_owner();
@@ -5806,9 +5841,9 @@ impl eframe::App for App {
                             {
                                 let owner = auth::handler_owner();
                                 let label = if owner == "launcher" {
-                                    "Give the headset link back to the vendor app"
+                                    tr(&self.config, "handler_give_back")
                                 } else {
-                                    "Take the headset link (launcher)"
+                                    tr(&self.config, "handler_take")
                                 };
                                 if ui.button(label).clicked() {
                                     let res = if owner == "launcher" {
@@ -5827,7 +5862,23 @@ impl eframe::App for App {
                         });
                         #[cfg(any(target_os = "linux", target_os = "windows"))]
                         ui.label(format!("headset link handler: {}", auth::handler_status()));
-                        ui.label(tr(&self.config, "login_help_2"));
+                        ui.label(tr(&self.config, "login_step_2"));
+                        ui.horizontal(|ui| {
+                            if ui.button(tr(&self.config, "login_btn")).clicked() {
+                                self.login_in_browser();
+                            }
+                            if ui.button(tr(&self.config, "check_login")).clicked() {
+                                // Ask the store whether this token still works.
+                                // The answer lands in the status line and the
+                                // bottom marker (green only when confirmed).
+                                if self.session.token.is_empty() {
+                                    self.status = "paste a login token first".into();
+                                } else {
+                                    self.start_probe();
+                                }
+                            }
+                        });
+                        ui.label(tr(&self.config, "login_step_3"));
                         ui.add(
                             egui::TextEdit::singleline(&mut self.callback_url)
                                 .hint_text("oculus://link/… the link the browser opened")
@@ -5845,24 +5896,13 @@ impl eframe::App for App {
                             self.save_session();
                         }
                         ui.horizontal(|ui| {
-                            if ui.button("Apply").clicked() {
+                            if ui.button(tr(&self.config, "apply_btn")).clicked() {
                                 self.redeem_callback();
-                            }
-                            if ui.button(tr(&self.config, "check_login")).clicked() {
-                                // Ask the store whether this token still works.
-                                // The answer lands in the status line and the
-                                // bottom marker (green only when confirmed).
-                                if self.session.token.is_empty() {
-                                    self.status = "paste a login token first".into();
-                                } else {
-                                    self.start_probe();
-                                }
                             }
                             if ui.button(tr(&self.config, "forget_token")).clicked() {
                                 self.clear_session();
                             }
                         });
-                        ui.label("Apply turns the browser login link into a token. Check login asks the store if the token still works. Forget deletes the token, the verified account and the login params from disk.");
                         ui.label(format!(
                             "token: {}  browser login params: {}",
                             if self.session.token.is_empty() { "none" } else { "present" },
@@ -5918,6 +5958,8 @@ impl eframe::App for App {
                     });
                     #[cfg(target_os = "windows")]
                     egui::Frame::group(ui.style()).show(ui, |ui| {
+                        ui.set_min_width(sect_w);
+                        ui.set_max_width(sect_w);
                         ui.label(tr(&self.config, "revive_section"));
                             ui.horizontal(|ui| {
                                 if ui.button(tr(&self.config, "revive_download")).clicked() {
@@ -6418,6 +6460,20 @@ impl eframe::App for App {
                                 DirTarget::DownloadDir => {
                                     self.config.download_dir = text;
                                     self.save_config();
+                                }
+                                #[cfg(not(target_os = "windows"))]
+                                DirTarget::ProtonDirs => {
+                                    let line = text.clone();
+                                    if !self.config.proton_dirs.iter().any(|d| d == &line) {
+                                        self.config.proton_dirs.push(line.clone());
+                                        self.save_config();
+                                        self.status = i18n::fill(
+                                            &tr(&self.config, "proton_dir_added"),
+                                            &[("path", &short_path(&line))],
+                                        );
+                                    } else {
+                                        self.status = tr(&self.config, "proton_dir_known");
+                                    }
                                 }
                                 DirTarget::PrefixDir => {
                                     self.config.prefix_dir = text;
