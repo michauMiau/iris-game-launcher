@@ -384,10 +384,14 @@ pub fn fetch_bytes_watch(
             Ok(r) => r,
             // A transport blip on a retry is not the download's verdict: the
             // loop re-attempts and the final error after all tries stays
-            // honest. Windows resets on reconnect mid-test more often than
-            // Linux, and failing at attempt 2's connect hid the truncation
-            // verdict behind a connection error.
+            // honest. Once bytes are already on disk, a failed resume means
+            // the stream died — report the truncation, not a connection
+            // error (Windows runners reset resumed loopback connects and hid
+            // the truncation verdict behind store_err wording).
             Err(e) => {
+                if !buf.is_empty() {
+                    break;
+                }
                 if attempt < 2 {
                     std::thread::sleep(std::time::Duration::from_millis(600));
                     continue;
