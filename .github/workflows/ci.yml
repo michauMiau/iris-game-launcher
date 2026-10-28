@@ -1,0 +1,92 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  linux:
+    name: Linux build + tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Install GUI deps
+        run: sudo apt-get update && sudo apt-get install -y libxcb1-dev libx11-dev
+      - name: Format check
+        run: cargo fmt --check
+        working-directory: launcher
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+        working-directory: launcher
+      - name: Tests
+        run: cargo test
+        working-directory: launcher
+      - name: Release build
+        run: cargo build --release
+        working-directory: launcher
+
+  windows:
+    name: Windows build + tests
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - name: Clippy
+        run: cargo clippy -- -D warnings
+        working-directory: launcher
+      - name: Tests
+        run: cargo test
+        working-directory: launcher
+      - name: Release build
+        run: cargo build --release
+        working-directory: launcher
+
+  windows-cross:
+    name: Windows package (mingw cross)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install mingw
+        run: sudo apt-get update && sudo apt-get install -y mingw-w64 libxcb1-dev libx11-dev
+      - name: Add Windows target
+        run: rustup target add x86_64-pc-windows-gnu
+      - name: Clippy for the packaged exe
+        run: cargo clippy --target x86_64-pc-windows-gnu -- -D warnings
+        working-directory: launcher
+      - name: Build the packaged exe
+        run: cargo build --release --target x86_64-pc-windows-gnu
+        working-directory: launcher
+      - uses: actions/upload-artifact@v4
+        with:
+          name: iris-launcher-win-x86_64
+          path: launcher/target/x86_64-pc-windows-gnu/release/iris-launcher.exe
+
+  shim:
+    name: Platform shim build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install mingw
+        run: sudo apt-get update && sudo apt-get install -y mingw-w64
+      - name: Add Windows target
+        run: rustup target add x86_64-pc-windows-gnu
+      - name: Build shim dll
+        run: cargo build --release --target x86_64-pc-windows-gnu
+        working-directory: shim
+      - name: Embed rebuilt shim into assets
+        run: cp shim/target/x86_64-pc-windows-gnu/release/platform_shim.dll assets/platform-shim.dll
+      - name: Launcher still compiles against the asset
+        run: cargo build --release
+        working-directory: launcher
