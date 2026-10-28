@@ -380,7 +380,21 @@ pub fn fetch_bytes_watch(
         if resuming {
             req = req.set("Range", &format!("bytes={}-", buf.len()));
         }
-        let resp = req.call().map_err(store_err)?;
+        let resp = match req.call() {
+            Ok(r) => r,
+            // A transport blip on a retry is not the download's verdict: the
+            // loop re-attempts and the final error after all tries stays
+            // honest. Windows resets on reconnect mid-test more often than
+            // Linux, and failing at attempt 2's connect hid the truncation
+            // verdict behind a connection error.
+            Err(e) => {
+                if attempt < 2 {
+                    std::thread::sleep(std::time::Duration::from_millis(600));
+                    continue;
+                }
+                return Err(store_err(e));
+            }
+        };
         if resuming && resp.status() != 206 {
             // Server ignored the Range header: the full body follows, so the
             // partial bytes must not be glued onto it.
