@@ -4,10 +4,12 @@
   <h5>20 MiB file, 20 MiB VRAM, 90 MiB RAM, for the whole app.</h5>
 </div>
 
+<div align="center">
 A lightweight replacement for the Meta Quest Link (formerly Oculus)
 Play all your bought games on Linux and Windows.
 
-Use your system resources for the game, not the launcher
+Use your system resources for your games, not the launcher.
+</div>
 
 ## Is this project SLOP?
 
