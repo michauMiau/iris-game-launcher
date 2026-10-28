@@ -1,4 +1,4 @@
-# Iris Game Launcher — release notes (draft, not pushed)
+# Iris Game Launcher v0.1.0
 
 Iris Game Launcher is a desktop library manager for PC VR games you already own.
 It is not affiliated with any storefront, and it contains no game content —
@@ -23,3 +23,18 @@ checks.
 ## Files in this release
 - IrisLauncher-x86_64.AppImage (Linux)
 - IrisLauncher-win-x86_64.exe (Windows)
+
+## Also in v0.1.0
+- Import from disk asks which library game a folder is, auto-matching store
+  manifests and folder names, with a plain-folder escape; matched games behave
+  exactly like store installs.
+- Folder and exe pickers use the desktop's own dialog (zenity, kdialog, yad,
+  PowerShell), falling back to the built-in chooser only when none is installed.
+- Achievement unlocks made by games are recorded into the shim trace log in the
+  game folder, groundwork for the achievements section.
+- Windows: the runtime swap moves the headset plugin to the SteamVR translation
+  layer (one UAC prompt, originals backed up), restore available in settings.
+- The AppImage carries repository and update metadata, so AppImage update
+  tools can pull new versions from GitHub releases directly.
+- License: GPL-3.0; the vendored Revive translation layer keeps its MIT
+  attribution.
