@@ -602,7 +602,11 @@ pub(crate) fn pick_asset<'a>(
     avoid: &[&str],
 ) -> Option<&'a Value> {
     let name = |a: &Value| a["name"].as_str().unwrap_or("").to_lowercase();
-    let is_arch = |n: &str| n.ends_with(".tar.gz") || n.ends_with(".zip") || n.ends_with(".exe");
+    // .exe is NOT an archive here: MelonLoader v0.5.4 lists MelonLoader.Installer.exe
+    // first, and treating it as an archive made the picker hand an NSIS binary to
+    // the zip unpacker ("archive is incomplete (737280 bytes, no archive end
+    // found)" — the exact Installer.exe asset size, fetched twice and via curl too).
+    let is_arch = |n: &str| n.ends_with(".tar.gz") || n.ends_with(".zip");
     assets
         .iter()
         .find(|a| {

@@ -369,3 +369,25 @@ fn truncated_asset_gets_redownloaded_before_giving_up() {
     );
     std::fs::remove_dir_all(&dest).ok();
 }
+
+#[test]
+fn melon_asset_picker_never_selects_installer_exe() {
+    // Real v0.5.4 asset order: the NSIS Installer.exe leads the list. The
+    // picker must land on the x64 zip, not the exe whose size (737280) once
+    // surfaced as "archive is incomplete" on user machines.
+    let assets: Vec<serde_json::Value> = [
+        ("MelonLoader.Installer.exe", 737280usize),
+        ("MelonLoader.Installer.sha512", 128usize),
+        ("MelonLoader.x64.sha512", 128usize),
+        ("MelonLoader.x64.zip", 18197505usize),
+        ("MelonLoader.x86.zip", 17849048usize),
+    ]
+    .iter()
+    .map(|(n, s)| {
+        serde_json::json!({"name": n, "size": s, "browser_download_url": format!("https://gh/{n}")})
+    })
+    .collect();
+    let picked = crate::fetcher::pick_asset(&assets, &[], &["linux", "mac", "macos"])
+        .expect("a zip must be picked");
+    assert_eq!(picked["name"].as_str().unwrap(), "MelonLoader.x64.zip");
+}
