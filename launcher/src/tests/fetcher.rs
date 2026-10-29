@@ -317,9 +317,11 @@ fn network_blips_are_not_reported_as_token_rejections() {
 
 #[test]
 fn truncated_asset_gets_redownloaded_before_giving_up() {
-    // A bodyless-header server that closes early: the watch accepts the clean
-    // EOF, the zip guard catches the cut archive, and install_release must
-    // re-fetch instead of giving up after one pass.
+    // A server that delivers exactly what it announces but whose body is not
+    // a real zip: the watch accepts the clean stream, the zip guard catches
+    // the cut archive, and install_release must re-fetch instead of giving up
+    // after one pass. Announcing the true 50 bytes keeps this deterministic
+    // on Windows runners, where mismatched Content-Length reconnects reset.
     let served = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
@@ -328,9 +330,9 @@ fn truncated_asset_gets_redownloaded_before_giving_up() {
         for mut stream in listener.incoming().flatten() {
             use std::io::Write;
             cnt.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            let _ = stream.write_all(b"HTTP/1.1 200 OK\r\n\r\n");
+            let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 50\r\n\r\n");
             let _ = stream.write_all(&[b'0'; 50]);
-            let _ = stream.shutdown(std::net::Shutdown::Write);
+            drop(stream);
         }
     });
     let dest = std::env::temp_dir().join(format!("iris-retry-{}", std::process::id()));
