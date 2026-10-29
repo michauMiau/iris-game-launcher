@@ -327,13 +327,23 @@ fn truncated_asset_gets_redownloaded_before_giving_up() {
     let port = listener.local_addr().unwrap().port();
     let cnt = served.clone();
     std::thread::spawn(move || {
-        for mut stream in listener.incoming().flatten() {
-            use std::io::Write;
-            cnt.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            let _ = stream
-                .write_all(b"HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 50\r\n\r\n");
-            let _ = stream.write_all(&[b'0'; 50]);
-            drop(stream);
+        // Per-connection threads and a short keep-alive after the body: wine's
+        // loopback resets immediate closes, which hid the retry verdict behind
+        // a connection error on the Windows test lanes.
+        for stream in listener.incoming().flatten() {
+            let cnt = cnt.clone();
+            std::thread::spawn(move || {
+                use std::io::Write;
+                cnt.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let mut s = stream;
+                let _ = s.write_all(
+                    b"HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 50\r\n\r\n",
+                );
+                let _ = s.write_all(&[b'0'; 50]);
+                let _ = s.flush();
+                std::thread::sleep(std::time::Duration::from_millis(1500));
+                drop(s);
+            });
         }
     });
     let dest = std::env::temp_dir().join(format!("iris-retry-{}", std::process::id()));
@@ -347,7 +357,11 @@ fn truncated_asset_gets_redownloaded_before_giving_up() {
         &stop,
     )
     .expect_err("a cut archive must never be accepted");
-    assert!(e.contains("retried 3 times"), "got: {e}");
+    let served_now = served.load(std::sync::atomic::Ordering::Relaxed);
+    assert!(
+        e.contains("retried 3 times"),
+        "got: {e} (connections served: {served_now})"
+    );
     assert!(e.contains("cut off"), "got: {e}");
     assert!(
         served.load(std::sync::atomic::Ordering::Relaxed) >= 3,

@@ -206,3 +206,19 @@ fn pipe_relay_symlinks_reach_the_server_side_dir() {
     std::fs::remove_dir_all(&root).ok();
     std::fs::remove_dir_all(&relay).ok();
 }
+
+#[cfg(not(target_os = "windows"))]
+#[test]
+fn wine64_found_beside_proton_layout() {
+    let _guard = crate::ENV_LOCK.lock().expect("env lock");
+    let tag = format!("iris-wine64-{}", std::process::id());
+    let root = std::env::temp_dir().join(&tag);
+    std::fs::remove_dir_all(&root).ok();
+    let proton = root.join("GE-Proton10-33");
+    std::fs::create_dir_all(proton.join("files/bin")).unwrap();
+    std::fs::write(proton.join("proton"), b"#!/bin/sh\n").unwrap();
+    std::fs::write(proton.join("files/bin/wine64"), b"x").unwrap();
+    let found = crate::wine64_for(&proton.join("proton"));
+    assert_eq!(found, Some(proton.join("files/bin/wine64")));
+    std::fs::remove_dir_all(&root).ok();
+}

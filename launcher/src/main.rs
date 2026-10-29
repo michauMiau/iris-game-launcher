@@ -626,6 +626,52 @@ fn proton_vr_capable(script: &std::path::Path) -> bool {
     major > 10 || (major == 10 && minor >= 33)
 }
 
+/// Valve's wineopenxr refuses to initialize unless HKCU\Software\Wine\VR
+/// exists in the prefix, and steam_helper writes that key only for games
+/// launched through Steam (issues #7382 and #8256). Outside Steam the key is
+/// missing in a fresh prefix, so a game that worked through Steam (Bonelab)
+/// runs plain desktop in any other prefix. Create the bare key with the
+/// prefix's own wine64; an existing key is left alone.
+#[cfg(not(target_os = "windows"))]
+fn wine64_for(proton_script: &std::path::Path) -> Option<std::path::PathBuf> {
+    let parent = proton_script.parent()?;
+    [
+        parent.join("files/bin/wine64"),
+        parent.join("files/bin/wine"),
+    ]
+    .into_iter()
+    .find(|c| c.is_file())
+}
+
+#[cfg(not(target_os = "windows"))]
+fn wine_vr_registry_gate(prefix: &std::path::Path, proton_script: &std::path::Path) {
+    let Some(wine) = wine64_for(proton_script) else {
+        auth::log_line("wine64 not found beside the proton script; VR registry not ensured");
+        return;
+    };
+    let query = std::process::Command::new(&wine)
+        .env("WINEPREFIX", prefix)
+        .args(["reg", "query", "HKCU\\Software\\Wine\\VR"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+    if query.map(|s| s.success()).unwrap_or(false) {
+        return;
+    }
+    let add = std::process::Command::new(&wine)
+        .env("WINEPREFIX", prefix)
+        .args(["reg", "add", "HKCU\\Software\\Wine\\VR", "/f"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+    match add {
+        Ok(s) if s.success() => auth::log_line(
+            "Wine VR registry key created in this game's prefix so wineopenxr can initialize outside Steam",
+        ),
+        _ => auth::log_line("could not create the Wine VR registry key; XR may stay off in this prefix"),
+    }
+}
+
 /// protonfixes (GE-Proton) aborts the whole launch when no numeric game id
 /// is in the environment, so every Proton run gets one: the store app id if
 /// it is numeric, otherwise a synthetic 10-digit hash far outside the real
@@ -4361,6 +4407,8 @@ impl App {
                                 auth::log_line(
                                     "this Proton build cannot open XR outside Steam - Valve's wineopenxr only initializes the VR registry through Steam (issues #7382 and #8256); download GE-Proton 10-33 or newer in Proton versions and pick it for this game",
                                 );
+                            } else {
+                                wine_vr_registry_gate(&prefix, &inner_bin);
                             }
                         } else {
                             // SteamVR ships .desktop handlers for vrserver; the
