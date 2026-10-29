@@ -32,8 +32,8 @@ No Claude or ChatGPT here.
 ## Game Compatibility
 
 | Game    | Status |
-| -------- | ------- |
-| BONELAB  | ✅ Leaderboards and achievemnts not implemented, Fusion broken |
+| :--------: | ------- |
+| BONELAB  | ✅ Leaderboards and achievements not implemented, Fusion broken |
 | BONEWORKS | ❌ Will fix in upcoming release |
 
 
