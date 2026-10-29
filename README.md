@@ -12,7 +12,7 @@ Use your system resources for your games, not the launcher.
 </div>
 
 <div align="center">
-  <img src="assets/screenshot.png" alt="Iris Game Launcher library with curated games" width="760">
+  <img src="assets/screenshot.png" alt="Iris Game Launcher Screenshot with library games" width="760">
 </div>
 
 ## Is this project SLOP?
@@ -20,18 +20,23 @@ Use your system resources for your games, not the launcher.
 While this project has been *vibecoded* (and I'm not proud of it), care has been taken to ensure this project is free of bugs, problems and regressions. 
 This App has been rigorously tested by me, and I'm confident of its quality.
 
-This project has been made entirely using local, open-weight models run entirely on my own lackluster hardware (RTX 4070, 32 GB DDR4, not a 4x DGX Spark cluster)
+This project has been made entirely using local, open-weight models run entirely on my own lackluster hardware (RTX 4070, 32 GB DDR4, not a 4x DGX Spark cluster). 
+No Claude or ChatGPT here.
 
 
 ## Install
 
-- Linux: grab the AppImage from the releases page, `chmod +x IrisLauncher-x86_64.AppImage`, run it. Needs FUSE (or `--appimage-extract-and-run`).
-- Windows: grab `IrisLauncher-win-x86_64.exe` from the releases page and run it.
+- Linux: grab the AppImage from the [releases](https://github.com/michauMiau/iris-game-launcher/releases) page, `chmod +x IrisLauncher-x86_64.AppImage`, run it. Needs FUSE (or `--appimage-extract-and-run` if you don't have FUSE).
+- Windows: grab `IrisLauncher-win-x86_64.exe` from the [releases](https://github.com/michauMiau/iris-game-launcher/releases) page and run it.
 
-## Keeping it updated
+## Game Compatibility
 
-Linux: `appimageupdatetool IrisLauncher-x86_64.AppImage` pulls the newest version through the zsync delta stored in the AppImage metadata. Windows: download the new exe and replace the old one.
+| Game    | Status |
+| -------- | ------- |
+| BONELAB  | ✅ Leaderboards and achievemnts not implemented, Fusion broken |
+| BONEWORKS | ❌ Will fix in upcoming release |
+
 
 ## License
 
-GPL-3.0. The vendored OpenXR translation layer (Revive derivative) keeps its own MIT attribution.
+GPL-3.0. The OpenXR translation layer (Revive derivative) is MIT.
