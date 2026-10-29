@@ -682,7 +682,50 @@ pub fn install_release(
             }
         }
     }
-    Err(format!("{last} — retried 3 times, still cut off; the network to the store is dropping the stream mid-body"))
+    // A deterministic cut at the same byte count every try is not a transient:
+    // on user machines the in-process ureq stream was cut at exactly 720 KiB
+    // while plain system curl delivered the full 19.2 MB. Redirect-chain and
+    // chunked-body handling differ, so the system curl is the fallback before
+    // declaring the asset unreachable.
+    let tmp = std::env::temp_dir().join(format!("pcvr-curl-asset-{}", std::process::id()));
+    let curl_ok = std::process::Command::new("curl")
+        .args(["-sL", "--fail", "-o"])
+        .arg(&tmp)
+        .arg(url)
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if !curl_ok {
+        std::fs::remove_file(&tmp).ok();
+        return Err(format!(
+            "{last} — retried 3 times, still cut off; system curl could not reach the asset either"
+        ));
+    }
+    let bytes = std::fs::read(&tmp).map_err(|e| format!("read curl download: {e}"))?;
+    std::fs::remove_file(&tmp).ok();
+    crate::auth::log_line(&format!(
+        "asset re-fetched via system curl ({} bytes) after the in-process stream was cut off",
+        bytes.len()
+    ));
+    let mut p = progress.lock().unwrap();
+    p.2 = bytes.len() as u64;
+    p.3 = bytes.len() as u64;
+    let unpacked = if url.ends_with(".tar.gz") {
+        #[cfg(not(target_os = "windows"))]
+        {
+            unpack_tar(&bytes, dest_dir)
+        }
+        #[cfg(target_os = "windows")]
+        Err("tar.gz needs a Linux host".to_string())
+    } else {
+        unpack_zip(bytes, dest_dir)
+    };
+    match unpacked {
+        Ok(()) => Ok(()),
+        Err(e) => Err(format!(
+            "{last} — retried 3 times and system curl as well, still cut off: {e}"
+        )),
+    }
 }
 
 /// Unpack a tar.gz asset with the system tar (Linux), rejecting a corrupt
