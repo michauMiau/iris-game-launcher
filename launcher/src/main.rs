@@ -868,6 +868,29 @@ fn vr_runtime_dir_from_server_env() -> Option<std::path::PathBuf> {
                     .any(|e| e.file_name().to_string_lossy().contains("pipe"))
             })
             .unwrap_or(false);
+        // The pipes are abstract sockets: if their names carry this dir's
+        // path, vrclient reaches them by name even when the dir itself is
+        // invisible here (Steam's container mount namespace).
+        let pipes =
+            vr_abstract_pipes(&std::fs::read_to_string("/proc/net/unix").unwrap_or_default());
+        if !visible {
+            #[cfg(not(target_os = "windows"))]
+            if let Some(relay) = vr_pipe_relay(&pid, &dir) {
+                return Some(relay);
+            }
+        }
+        if !visible
+            && pipes
+                .iter()
+                .any(|p| p.starts_with(dir.display().to_string().as_str()))
+        {
+            auth::log_line(&format!(
+                "vrserver pipe dir {} invisible in this mount ns, but {} abstract pipes carry its name — forwarding anyway",
+                dir.display(),
+                pipes.len()
+            ));
+            return Some(dir);
+        }
         // Log what the server advertises even when it is unusable, so the
         // next launcher.log run names Steam's real pipe dir instead of
         // guessing whether the container hides it.
@@ -887,21 +910,61 @@ fn vr_runtime_dir_from_server_env() -> Option<std::path::PathBuf> {
     None
 }
 
+/// Names of SteamVR's abstract vrserver pipes. Valve names them "<dir>/vrserver_pipe_<pid>_<fd>"
+/// as ABSTRACT sockets (leading '@' in /proc/net/unix), so the pipe dir can be
+/// invisible in our mount namespace while the sockets themselves are reachable
+/// in the shared netns. ss is not a dependency: /proc/net/unix always exists.
 #[cfg_attr(target_os = "windows", allow(dead_code))]
-fn vr_runtime_dir_discovered() -> Option<std::path::PathBuf> {
-    let out = std::process::Command::new("ss")
-        .args(["-xlpn"])
-        .output()
-        .ok()?;
-    let text = String::from_utf8_lossy(&out.stdout);
-    for line in text.lines() {
-        if !line.contains("vrserver") {
+fn vr_abstract_pipes(net_unix: &str) -> Vec<String> {
+    net_unix
+        .lines()
+        .filter_map(|l| l.split_whitespace().last())
+        .filter(|n| n.contains("vrserver_pipe") || n.contains("vrserverpipe"))
+        .map(|n| n.trim_start_matches('@').to_string())
+        .collect()
+}
+
+/// Steam's container keeps its pipe dir in a mount namespace we cannot see,
+/// but /proc/<pid>/root lets the launcher reach the real socket files. Symlink
+/// each vrserver pipe into a visible dir and hand that dir to the game: a
+/// socket connect through a symlink resolves to the server's real socket even
+/// across mount namespaces (same user, so /proc/<pid>/root is readable).
+#[cfg(not(target_os = "windows"))]
+fn vr_pipe_relay(pid: &str, dir: &std::path::Path) -> Option<std::path::PathBuf> {
+    let root = std::path::Path::new(&format!("/proc/{pid}/root"))
+        .join(dir.strip_prefix("/").unwrap_or(dir));
+    let rd = std::fs::read_dir(&root).ok()?;
+    let relay = data_dir().join("vr-pipes");
+    std::fs::remove_dir_all(&relay).ok();
+    std::fs::create_dir_all(&relay).ok()?;
+    let mut made = 0usize;
+    for e in rd.flatten() {
+        let name = e.file_name().to_string_lossy().to_string();
+        if !(name.contains("vrserver_pipe") || name.contains("vrserverpipe")) {
             continue;
         }
-        for tok in line.split_whitespace() {
-            if tok.starts_with('/') && (tok.contains("vrserverpipe") || tok.ends_with("pipe")) {
-                return std::path::Path::new(tok).parent().map(|d| d.to_path_buf());
-            }
+        if std::os::unix::fs::symlink(root.join(&name), relay.join(&name)).is_ok() {
+            made += 1;
+        }
+    }
+    if made == 0 {
+        return None;
+    }
+    auth::log_line(&format!(
+        "vrserver pipe dir unreachable here; relayed {made} pipes via /proc/{pid}/root symlinks to {}",
+        relay.display()
+    ));
+    Some(relay)
+}
+
+#[cfg_attr(target_os = "windows", allow(dead_code))]
+fn vr_runtime_dir_discovered() -> Option<std::path::PathBuf> {
+    let text = std::fs::read_to_string("/proc/net/unix").ok()?;
+    for name in vr_abstract_pipes(&text) {
+        if name.starts_with('/') {
+            return std::path::Path::new(&name)
+                .parent()
+                .map(|d| d.to_path_buf());
         }
     }
     None
@@ -1631,14 +1694,23 @@ fn toggle_arg(args: &mut Vec<String>, arg: &str, on: bool) -> bool {
     }
 }
 
-fn open_folder(path: &Path) {
-    let _ = std::process::Command::new(if cfg!(target_os = "windows") {
+fn open_folder(path: &Path) -> Result<(), String> {
+    // xdg-open child failures are invisible to a fire-and-forget spawn, so
+    // report the attempt and the path: custom installs on second disks used
+    // to look dead when the desktop's opener refused.
+    let tool = if cfg!(target_os = "windows") {
         "explorer"
     } else {
         "xdg-open"
-    })
-    .arg(path)
-    .spawn();
+    };
+    match std::process::Command::new(tool).arg(path).spawn() {
+        Ok(_) => Ok(()),
+        Err(e) => Err(format!(
+            "{} could not start: {e} — folder: {}",
+            tool,
+            path.display()
+        )),
+    }
 }
 
 /// Reload session.json into memory only when the bytes on disk differ from
@@ -5135,7 +5207,10 @@ impl App {
                             ui.close_menu();
                         }
                         if installed && ui.button(tr(&self.config, "browse_files")).clicked() {
-                            open_folder(Path::new(&g.install_dir));
+                            self.status = match open_folder(Path::new(&g.install_dir)) {
+                                Ok(()) => format!("opened {}", g.install_dir),
+                                Err(e) => e,
+                            };
                             ui.close_menu();
                         }
                         // The Unity data folder (saves, Player.log) lives in
@@ -5150,8 +5225,10 @@ impl App {
                             let _ = (&self.config, idx);
                             match data_folder(Some(&prefix)) {
                                 Some(dir) => {
-                                    open_folder(&dir);
-                                    self.status = format!("opened {}", dir.display());
+                                    self.status = match open_folder(&dir) {
+                                        Ok(()) => format!("opened {}", dir.display()),
+                                        Err(e) => e,
+                                    };
                                 }
                                 None => {
                                     self.status = "data folder not there yet — it appears after the game first runs".into();
@@ -5698,12 +5775,18 @@ impl eframe::App for App {
                             self.dir_popup = Some((start, DirTarget::Import));
                         }
                         if ui.button("Open download dir").clicked() {
-                            open_folder(&PathBuf::from(&self.config.download_dir));
+                            let dir = PathBuf::from(&self.config.download_dir);
+                            self.status = match open_folder(&dir) {
+                                Ok(()) => format!("opened {}", dir.display()),
+                                Err(e) => e,
+                            };
                         }
                         if ui.button("Open log file").clicked() {
                             if let Some(p) = auth::log_path() {
-                                open_folder(Path::new(&p));
-                                self.status = format!("log: {p}");
+                                self.status = match open_folder(Path::new(&p)) {
+                                    Ok(()) => format!("opened log folder: {p}"),
+                                    Err(e) => e,
+                                };
                             }
                         }
                     });

@@ -160,3 +160,49 @@ fn proton_vr_capability_reads_ge_build_names() {
     assert!(!proton_vr_capable(&p("Proton - Experimental")));
     assert!(!proton_vr_capable(&p("cachyos-11.0-20261015-slr")));
 }
+
+#[cfg(not(target_os = "windows"))]
+#[test]
+fn abstract_pipe_names_found_and_dir_derived() {
+    let sample = "ffff000000000000 2 0 0 00000000 12345 @/tmp/steamvr/vrserver_pipe_99_0\n\
+ffff000000000001 2 0 0 00000000 678 /home/u/.config/SteamVR/vrserver_pipe_55_1\n\
+ffff000000000002 1 100 0 00000000 999 /tmp/other_socket\n";
+    let pipes = crate::vr_abstract_pipes(sample);
+    assert_eq!(pipes.len(), 2, "only vrserver pipes are picked");
+    assert!(pipes.contains(&"/tmp/steamvr/vrserver_pipe_99_0".to_string()));
+    assert!(pipes.contains(&"/home/u/.config/SteamVR/vrserver_pipe_55_1".to_string()));
+}
+
+#[cfg(not(target_os = "windows"))]
+#[test]
+fn pipe_relay_symlinks_reach_the_server_side_dir() {
+    // The relay reads the server dir through /proc/<pid>/root. Using our own
+    // pid keeps the test real: /proc/self/root resolves to this filesystem.
+    let _guard = crate::ENV_LOCK.lock().expect("env lock");
+    let tag = format!("iris-relay-{}", std::process::id());
+    let root = std::env::temp_dir().join(&tag);
+    std::fs::remove_dir_all(&root).ok();
+    std::env::set_var("XDG_DATA_HOME", &root);
+    let pipes = root.join("steamvr");
+    std::fs::create_dir_all(&pipes).unwrap();
+    std::fs::write(pipes.join("vrserver_pipe_4242_0"), b"socket").unwrap();
+    std::fs::write(pipes.join("not-a-pipe.txt"), b"x").unwrap();
+    let rel = pipes.strip_prefix("/").unwrap();
+    let relay = crate::vr_pipe_relay(
+        &std::process::id().to_string(),
+        &std::path::Path::new("/").join(rel),
+    )
+    .expect("relay must find the pipe file");
+    let linked = relay.join("vrserver_pipe_4242_0");
+    assert!(linked.exists(), "relay must symlink the vrserver pipe");
+    assert!(
+        !relay.join("not-a-pipe.txt").exists(),
+        "non-pipe files stay out"
+    );
+    assert!(std::fs::read_link(&linked)
+        .unwrap()
+        .to_string_lossy()
+        .contains(&format!("/proc/{}/root", std::process::id())));
+    std::fs::remove_dir_all(&root).ok();
+    std::fs::remove_dir_all(&relay).ok();
+}

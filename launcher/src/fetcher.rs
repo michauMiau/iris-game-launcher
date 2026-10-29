@@ -644,19 +644,45 @@ pub fn install_release(
     progress: &std::sync::Arc<std::sync::Mutex<(usize, usize, u64, u64)>>,
     stop: &std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) -> Result<(), String> {
-    let bytes = fetch_bytes_watch(url, progress, stop)?;
     std::fs::create_dir_all(dest_dir).map_err(|e| format!("mkdir: {e}"))?;
-    if url.ends_with(".tar.gz") {
-        #[cfg(not(target_os = "windows"))]
-        {
-            unpack_tar(&bytes, dest_dir)?;
+    // A stream without a Content-Length can end clean at a partial body, so
+    // the watch accepts it and the archive guard is what catches the cut.
+    // Retrying the fetch is the honest recovery for that; a corrupt-but-complete
+    // archive fails fast without retry.
+    let mut last = String::new();
+    for attempt in 0..3 {
+        if stop.load(std::sync::atomic::Ordering::Relaxed) {
+            return Err("download cancelled".into());
         }
-        #[cfg(target_os = "windows")]
-        return Err("tar.gz needs a Linux host".into());
-    } else {
-        unpack_zip(bytes, dest_dir)?;
+        let bytes = fetch_bytes_watch(url, progress, stop)?;
+        let unpack = if url.ends_with(".tar.gz") {
+            #[cfg(not(target_os = "windows"))]
+            {
+                unpack_tar(&bytes, dest_dir)
+            }
+            #[cfg(target_os = "windows")]
+            Err("tar.gz needs a Linux host".to_string())
+        } else {
+            unpack_zip(bytes, dest_dir)
+        };
+        match unpack {
+            Ok(()) => return Ok(()),
+            Err(e) => {
+                last = e;
+                if !last.contains("cut off") && !last.contains("incomplete") {
+                    return Err(last);
+                }
+                if attempt < 2 {
+                    crate::auth::log_line(&format!(
+                        "asset unpack hit a truncated archive ({last}); re-downloading (try {})",
+                        attempt + 2
+                    ));
+                    std::thread::sleep(std::time::Duration::from_millis(800));
+                }
+            }
+        }
     }
-    Ok(())
+    Err(format!("{last} — retried 3 times, still cut off; the network to the store is dropping the stream mid-body"))
 }
 
 /// Unpack a tar.gz asset with the system tar (Linux), rejecting a corrupt
