@@ -330,7 +330,8 @@ fn truncated_asset_gets_redownloaded_before_giving_up() {
         for mut stream in listener.incoming().flatten() {
             use std::io::Write;
             cnt.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 50\r\n\r\n");
+            let _ = stream
+                .write_all(b"HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 50\r\n\r\n");
             let _ = stream.write_all(&[b'0'; 50]);
             drop(stream);
         }
