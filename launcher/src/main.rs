@@ -627,11 +627,12 @@ fn proton_vr_capable(script: &std::path::Path) -> bool {
 }
 
 /// Valve's wineopenxr refuses to initialize unless HKCU\Software\Wine\VR
-/// exists in the prefix, and steam_helper writes that key only for games
-/// launched through Steam (issues #7382 and #8256). Outside Steam the key is
-/// missing in a fresh prefix, so a game that worked through Steam (Bonelab)
-/// runs plain desktop in any other prefix. Create the bare key with the
-/// prefix's own wine64; an existing key is left alone.
+/// exists in the prefix registry, and steam_helper writes that key only for
+/// games launched through Steam (issues #7382 and #8256). Outside Steam the
+/// key is missing in a fresh prefix, so a game that worked through Steam
+/// (Bonelab) runs plain desktop in any other prefix. Create the bare key with
+/// the prefix's own wine64; an existing key is left alone. The gate is used
+/// only for Proton launches, whose registry lives under pfx/.
 #[cfg(not(target_os = "windows"))]
 fn wine64_for(proton_script: &std::path::Path) -> Option<std::path::PathBuf> {
     let parent = proton_script.parent()?;
@@ -645,12 +646,17 @@ fn wine64_for(proton_script: &std::path::Path) -> Option<std::path::PathBuf> {
 
 #[cfg(not(target_os = "windows"))]
 fn wine_vr_registry_gate(prefix: &std::path::Path, proton_script: &std::path::Path) {
+    // GE-Proton keeps its real prefix in the pfx subfolder and wineopenxr
+    // reads HKCU from THAT registry. Writing the key with WINEPREFIX=<prefix>
+    // lands in a sibling registry proton never uses, so Bonelab (whose key
+    // Steam wrote into pfx) worked while Boneworks stayed XR-dead.
+    let reg_prefix = prefix.join("pfx");
     let Some(wine) = wine64_for(proton_script) else {
         auth::log_line("wine64 not found beside the proton script; VR registry not ensured");
         return;
     };
     let query = std::process::Command::new(&wine)
-        .env("WINEPREFIX", prefix)
+        .env("WINEPREFIX", &reg_prefix)
         .args(["reg", "query", "HKCU\\Software\\Wine\\VR"])
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
@@ -659,7 +665,7 @@ fn wine_vr_registry_gate(prefix: &std::path::Path, proton_script: &std::path::Pa
         return;
     }
     let add = std::process::Command::new(&wine)
-        .env("WINEPREFIX", prefix)
+        .env("WINEPREFIX", &reg_prefix)
         .args(["reg", "add", "HKCU\\Software\\Wine\\VR", "/f"])
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
