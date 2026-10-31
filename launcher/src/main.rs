@@ -678,6 +678,89 @@ fn wine_vr_registry_gate(prefix: &std::path::Path, proton_script: &std::path::Pa
     }
 }
 
+/// Boneworks talks OpenVR on both store flavors (developer: no Oculus SDK mode).
+/// Valve's vrclient reads runtime info from HKCU\Software\Valve\VR, which
+/// steam_helper writes ONLY into the prefix of games launched through Steam.
+/// A prefix that ran a VR game once via Steam (Bonelab) has that key; cloning
+/// it into a fresh prefix is the outside-Steam fix, so no Steam re-run needed.
+#[cfg(not(target_os = "windows"))]
+fn valve_vr_registry_present(wine: &std::path::Path, pfx: &std::path::Path) -> bool {
+    std::process::Command::new(wine)
+        .env("WINEPREFIX", pfx)
+        .args(["reg", "query", "HKCU\\Software\\Valve\\VR"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+#[cfg(not(target_os = "windows"))]
+fn valve_vr_registry_clone(prefix: &std::path::Path, proton_script: &std::path::Path) {
+    let Some(wine) = wine64_for(proton_script) else {
+        return;
+    };
+    let target_pfx = prefix.join("pfx");
+    if valve_vr_registry_present(&wine, &target_pfx) {
+        return;
+    }
+    // A donor is any other game prefix that Steam already wrote the key into.
+    let root = prefix.parent().unwrap_or(prefix);
+    let donors = std::fs::read_dir(root)
+        .ok()
+        .into_iter()
+        .flat_map(|rd| rd.filter_map(|e| e.ok()).map(|e| e.path()));
+    for donor in donors {
+        if donor == prefix {
+            continue;
+        }
+        let donor_pfx = donor.join("pfx");
+        if !valve_vr_registry_present(&wine, &donor_pfx) {
+            continue;
+        }
+        let dump = std::env::temp_dir().join(format!("iris-valve-vr-{}.reg", std::process::id()));
+        let export_ok = std::process::Command::new(&wine)
+            .env("WINEPREFIX", &donor_pfx)
+            .args([
+                "reg",
+                "export",
+                "HKCU\\Software\\Valve\\VR",
+                dump.to_str().unwrap_or(""),
+                "/y",
+            ])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        if !export_ok {
+            continue;
+        }
+        let import_ok = std::process::Command::new(&wine)
+            .env("WINEPREFIX", &target_pfx)
+            .args(["reg", "import", dump.to_str().unwrap_or("")])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        std::fs::remove_file(&dump).ok();
+        if import_ok {
+            auth::log_line(&format!(
+                "Valve VR registry cloned from {} into this prefix's pfx (outside-Steam VR wiring)",
+                donor
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_default()
+            ));
+            return;
+        }
+    }
+    auth::log_line(
+        "Valve VR registry missing and no donor prefix holds it — launch a VR game through Steam once so steam_helper writes HKCU\\Software\\Valve\\VR"
+    );
+}
+
 /// protonfixes (GE-Proton) aborts the whole launch when no numeric game id
 /// is in the environment, so every Proton run gets one: the store app id if
 /// it is numeric, otherwise a synthetic 10-digit hash far outside the real
@@ -4406,15 +4489,17 @@ impl App {
                             ));
                             cmd.env("XR_RUNTIME_JSON", manifest);
                         }
+                        if proton_vr_capable(&inner_bin) {
+                            wine_vr_registry_gate(&prefix, &inner_bin);
+                            valve_vr_registry_clone(&prefix, &inner_bin);
+                        }
                         if vrserver_running_cached() {
                             auth::log_line("vrserver already running — the game bridges into it");
                             vr_netns_diag();
                             if !proton_vr_capable(&inner_bin) {
                                 auth::log_line(
-                                    "this Proton build cannot open XR outside Steam - Valve's wineopenxr only initializes the VR registry through Steam (issues #7382 and #8256); download GE-Proton 10-33 or newer in Proton versions and pick it for this game",
+                                    "this Proton build cannot open XR outside Steam - Valve's VR registry and wineopenxr only initialize through Steam (issues #7382 and #8256); download GE-Proton 10-33 or newer in Proton versions and pick it for this game",
                                 );
-                            } else {
-                                wine_vr_registry_gate(&prefix, &inner_bin);
                             }
                         } else {
                             // SteamVR ships .desktop handlers for vrserver; the
