@@ -1164,13 +1164,38 @@ const REVIVE_XR_BYTES: &[u8] = include_bytes!("../../assets/LibReviveXR64.dll");
 
 #[cfg(not(target_os = "windows"))]
 fn librevive_rt_step(game_dir: &Path) -> Option<PathBuf> {
-    let target = game_dir.join("LibOVRRT64_1.dll");
-    if !game_dir.is_dir() || target.exists() {
+    if !game_dir.is_dir() {
         return None;
     }
-    std::fs::write(&target, REVIVE_XR_BYTES)
-        .ok()
-        .map(|_| target)
+    // Unity-era headset plugins resolve their libovr through LibOVR.dll beside
+    // the plugin; replacing only LibOVRRT64_1.dll left that import path pointing
+    // at the real Oculus runtime, which finds no Oculus service under Wine and
+    // disables the headset plugin ("Security error. Oculus plugin is invalid").
+    // Both names get the Revive replacement, originals backed up once.
+    let backup = data_dir().join("ovr-backup");
+    let names = ["LibOVRRT64_1.dll", "LibOVR.dll"];
+    let mut landed = None;
+    for name in names {
+        let target = game_dir.join(name);
+        if target.is_file() {
+            let orig = backup.join(format!("{name}.orig"));
+            if !orig.exists() {
+                std::fs::create_dir_all(&backup).ok();
+                std::fs::copy(&target, &orig).ok();
+            }
+            if std::fs::read(&target)
+                .map(|b| b.len() == REVIVE_XR_BYTES.len())
+                .unwrap_or(false)
+            {
+                landed = Some(target);
+                continue;
+            }
+        }
+        if std::fs::write(&target, REVIVE_XR_BYTES).is_ok() {
+            landed = Some(target);
+        }
+    }
+    landed
 }
 
 /// SteamVR install on Windows: registry InstallPath first, common folders as
@@ -1684,9 +1709,13 @@ fn data_folder(prefix: Option<&Path>) -> Option<PathBuf> {
         // dir (prefixes/<game>/pfx/drive_c/...), plain Wine puts drive_c
         // straight under the prefix. Both layouts must be searched or the
         // data folder button claims "not there yet" while the files exist.
+        // Proton prefixes live under pfx/; plain Wine prefixes under drive_c.
+        // pfx is checked FIRST because a stale drive_c created by an earlier
+        // gate run (or plain-wine probe) would otherwise open an empty tree
+        // and hide the real Unity save folder.
         let roots = [
-            prefix.join("drive_c").join("users"),
             prefix.join("pfx").join("drive_c").join("users"),
+            prefix.join("drive_c").join("users"),
         ];
         let user = roots
             .iter()
