@@ -31,6 +31,14 @@ struct Config {
     #[serde(default)]
     #[cfg(not(target_os = "windows"))]
     proton_dirs: Vec<String>,
+    /// Linux only: Steam app id borrowed to satisfy SteamVR's app key auth.
+    /// Valve vrserver times out waiting for a valid app key when a game is
+    /// launched outside Steam, which shuts Boneworks' session down. Setting a
+    /// real owned Steam app id (Bonelab: 251740) approves the key.
+    #[serde(default)]
+    #[cfg(not(target_os = "windows"))]
+    steamvr_donor_appid: String,
+
     /// Full path to the chosen `proton` runscript, empty = fall back to wine_binary.
     #[serde(default)]
     #[cfg(not(target_os = "windows"))]
@@ -4484,6 +4492,13 @@ impl App {
             #[cfg(not(target_os = "windows"))]
             if use_proton {
                 cmd.env("SteamAppId", steam_app_id_for(&g.name, &g.app_id));
+                if !self.config.steamvr_donor_appid.trim().is_empty() {
+                    cmd.env("SteamAppId", self.config.steamvr_donor_appid.trim());
+                    auth::log_line(&format!(
+                        "SteamAppId overridden with donor {} for SteamVR app key auth",
+                        self.config.steamvr_donor_appid.trim()
+                    ));
+                }
                 // Steam starts SteamVR itself before a VR game; outside Steam
                 // nobody does, and Proton's bridge only connects to a live
                 // vrserver (Valve issue #962). The launcher takes over both
@@ -5905,6 +5920,15 @@ impl eframe::App for App {
                         });
                         #[cfg(not(target_os = "windows"))]
                         {
+                            ui.label(tr(&self.config, "doner_appid_label"));
+                            if ui.add(
+                            egui::TextEdit::singleline(&mut self.config.steamvr_donor_appid)
+                                .desired_width(ui.available_width() - 90.0),
+                            )
+                            .changed()
+                            {
+                                self.save_config();
+                            }
                             ui.label("Wine binary (used when no Proton picked):");
                             if ui.add(
                             egui::TextEdit::singleline(&mut self.config.wine_binary)
