@@ -234,7 +234,6 @@ fn plugin_ovrplugin_swap_replaces_and_backs_up() {
     std::fs::remove_dir_all(&root).ok();
     std::env::set_var("HOME", &root);
     std::env::set_var("XDG_DATA_HOME", root.join("xdg"));
-    crate::auth::set_log_dir(crate::auth::data_dir());
 
     let game = root.join("boneworks");
     let plugins = game.join("Boneworks_Oculus_Windows64_Data").join("Plugins");
@@ -248,7 +247,7 @@ fn plugin_ovrplugin_swap_replaces_and_backs_up() {
         std::fs::read(&dll).unwrap().len(),
         crate::REVIVE_XR_BYTES.len()
     );
-    let orig = crate::auth::data_dir()
+    let orig = crate::data_dir()
         .join("ovr-backup")
         .join("OVRPlugin.dll.orig");
     assert_eq!(std::fs::read(&orig).unwrap().len(), 1_234_567);
