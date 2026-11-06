@@ -222,32 +222,3 @@ fn wine64_found_beside_proton_layout() {
     assert_eq!(found, Some(proton.join("files/bin/wine64")));
     std::fs::remove_dir_all(&root).ok();
 }
-
-#[cfg(not(target_os = "windows"))]
-#[test]
-fn ovrplugin_candidates_find_data_plugin_layout() {
-    let _guard = crate::ENV_LOCK.lock().expect("env lock");
-    let tag = format!("iris-plugin-{}", std::process::id());
-    let root = std::env::temp_dir().join(&tag);
-    std::fs::remove_dir_all(&root).ok();
-    std::fs::create_dir_all(root.join("Boneworks_Oculus_Windows64_Data/Plugins/x86_64")).unwrap();
-    std::fs::create_dir_all(root.join("Other_Data/Plugins")).unwrap();
-    std::fs::write(
-        root.join("Boneworks_Oculus_Windows64_Data/Plugins/x86_64/OVRPlugin.dll"),
-        b"old",
-    )
-    .unwrap();
-    std::fs::write(root.join("Other_Data/Plugins/OVRPlugin.dll"), b"old2").unwrap();
-    std::fs::write(
-        root.join("Boneworks_Oculus_Windows64_Data/Plugins/LibOVR.dll"),
-        b"no",
-    )
-    .unwrap();
-    let found = crate::ovrplugin_dll_candidates(&root);
-    assert_eq!(found.len(), 2, "found: {found:?}");
-    assert!(found
-        .iter()
-        .any(|p| p.to_string_lossy().contains("Boneworks")));
-    assert!(found.iter().any(|p| p.to_string_lossy().contains("Other")));
-    std::fs::remove_dir_all(&root).ok();
-}

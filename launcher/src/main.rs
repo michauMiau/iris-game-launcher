@@ -1079,34 +1079,6 @@ fn platform_shim_step(game_dir: &Path) -> Option<PathBuf> {
 /// reaches the SteamVR Linux runtime through Proton's OpenXR passthrough.
 const REVIVE_XR_BYTES: &[u8] = include_bytes!("../../assets/LibReviveXR64.dll");
 
-/// Unity Oculus-era plugins import the libovr API from Data/Plugins/OVRPlugin.dll,
-/// so that file is the interceptable name: the plugin interface IS the ovr_* set.
-/// Enumerate the plugin candidates; originals are backed up once.
-#[cfg(not(target_os = "windows"))]
-fn ovrplugin_dll_candidates(game_dir: &Path) -> Vec<PathBuf> {
-    let mut out = Vec::new();
-    let Ok(entries) = std::fs::read_dir(game_dir) else {
-        return out;
-    };
-    for e in entries.filter_map(|e| e.ok()) {
-        let name = e
-            .path()
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_default();
-        if !name.ends_with("_Data") || !e.path().is_dir() {
-            continue;
-        }
-        for sub in ["Plugins", "Plugins/x86_64", "Plugins/x64", "Plugins/x86"] {
-            let cand = e.path().join(sub).join("OVRPlugin.dll");
-            if cand.is_file() {
-                out.push(cand);
-            }
-        }
-    }
-    out
-}
-
 #[cfg(not(target_os = "windows"))]
 fn librevive_rt_step(game_dir: &Path) -> Option<PathBuf> {
     if !game_dir.is_dir() {
@@ -1118,11 +1090,10 @@ fn librevive_rt_step(game_dir: &Path) -> Option<PathBuf> {
     // disables the headset plugin ("Security error. Oculus plugin is invalid").
     // Both names get the Revive replacement, originals backed up once.
     let backup = data_dir().join("ovr-backup");
-    let mut targets: Vec<PathBuf> = ["LibOVRRT64_1.dll", "LibOVR.dll"]
+    let targets: Vec<PathBuf> = ["LibOVRRT64_1.dll", "LibOVR.dll"]
         .iter()
         .map(|name| game_dir.join(name))
         .collect();
-    targets.extend(ovrplugin_dll_candidates(game_dir));
     let mut landed = None;
     for target in targets {
         let name = target
