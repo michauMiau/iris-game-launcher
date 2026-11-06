@@ -1080,6 +1080,82 @@ fn platform_shim_step(game_dir: &Path) -> Option<PathBuf> {
 const REVIVE_XR_BYTES: &[u8] = include_bytes!("../../assets/LibReviveXR64.dll");
 
 #[cfg(not(target_os = "windows"))]
+fn librevive_plugin_swap(game_dir: &Path) -> Option<PathBuf> {
+    // Unity-era headset plugins load Data/Plugins/OVRPlugin.dll, which IS the
+    // LibOVR C API (ovr_* exports) for the Oculus Unity SDK. Replacing THAT
+    // file — not exe-side libovr names — is what lets plugin init reach SteamVR,
+    // because static-linked plugin code cannot be intercepted by beside-exe swaps.
+    if !game_dir.is_dir() {
+        return None;
+    }
+    let mut candidates = Vec::new();
+    if let Ok(rd) = std::fs::read_dir(game_dir) {
+        for e in rd.filter_map(|x| x.ok()) {
+            let p = e.path();
+            if !p.is_dir() {
+                continue;
+            }
+            if p.file_name()
+                .map(|n| n.to_string_lossy().ends_with("_Data"))
+                .unwrap_or(false)
+            {
+                let plugins = p.join("Plugins");
+                if plugins.is_dir() {
+                    candidates.push(plugins.join("OVRPlugin.dll"));
+                    if let Ok(prd) = std::fs::read_dir(&plugins) {
+                        for sub in prd.filter_map(|x| x.ok()) {
+                            let sp = sub.path();
+                            if sp.is_dir() {
+                                candidates.push(sp.join("OVRPlugin.dll"));
+                            }
+                        }
+                    }
+                }
+            } else if p
+                .file_name()
+                .map(|n| n.to_string_lossy() == "Plugins")
+                .unwrap_or(false)
+            {
+                candidates.push(p.join("OVRPlugin.dll"));
+            }
+        }
+    }
+    let backup = data_dir().join("ovr-backup");
+    for cand in candidates {
+        if !cand.is_file() {
+            continue;
+        }
+        let orig = backup.join(
+            cand.file_name()
+                .map(|n| format!("{}.orig", n.to_string_lossy()))
+                .unwrap_or_else(|| "OVRPlugin.dll.orig".to_string()),
+        );
+        if !orig.exists() {
+            std::fs::create_dir_all(&backup).ok();
+            std::fs::copy(&cand, &orig).ok();
+        }
+        if std::fs::read(&cand)
+            .map(|b| b.len() == REVIVE_XR_BYTES.len())
+            .unwrap_or(false)
+        {
+            auth::log_line(&format!(
+                "OVRPlugin.dll already swapped: {}",
+                cand.display()
+            ));
+            return Some(cand);
+        }
+        if std::fs::write(&cand, REVIVE_XR_BYTES).is_ok() {
+            auth::log_line(&format!(
+                "OVRPlugin.dll replaced with the xr libovr layer (SteamVR OpenXR passthrough): {}",
+                cand.display()
+            ));
+            return Some(cand);
+        }
+    }
+    None
+}
+
+#[cfg(not(target_os = "windows"))]
 fn librevive_rt_step(game_dir: &Path) -> Option<PathBuf> {
     if !game_dir.is_dir() {
         return None;
@@ -4520,6 +4596,9 @@ impl App {
                 if use_proton
                     && steamvr_runtime_root(&std::env::var("HOME").unwrap_or_default()).is_some()
                 {
+                    if librevive_plugin_swap(game_dir).is_some() {
+                        auth::log_line("plugin OVRPlugin swap applied");
+                    }
                     if let Some(rt) = librevive_rt_step(game_dir) {
                         auth::log_line(&format!("revive translation placed as {}", rt.display()));
                     }
