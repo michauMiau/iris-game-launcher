@@ -32,6 +32,8 @@ The shim also carries achievement ids into the trace: `ovr_Achievements_Unlock` 
 
 The shim covers the Platform API only. The VR/compositor side the headset plugin uses (LibOVRRT) is answered by the translation layer, which is platform-specific.
 
+Unity-era plugins on Wine import the libovr API from `*_Data/Plugins/[x86_64|x64]/OVRPlugin.dll` — that file IS the interceptable name (the plugin interface is the `ovr_*` set, confirmed by dumping the exports of Boneworks' shipped plugin), so `librevive_rt_step` places the translation DLL there too, originals backed up to `data/ovr-backup`. Beside-exe LibOVRRT64_1.dll covers games that import by that name.
+
 ## Where the difference shows
 
 ### Linux
