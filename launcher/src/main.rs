@@ -2034,7 +2034,16 @@ fn capture_output(
     hint_dir: PathBuf,
     gfx_note: Slot<String>,
     running: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    trace_file: Option<PathBuf>,
 ) {
+    // When a trace file is requested (IRIS_WINEDEBUG), drain output into the
+    // file instead of the launcher log: a loaddll trace is tens of thousands
+    // of lines and would drown the launcher log.
+    let trace = trace_file.and_then(|p| {
+        std::fs::File::create(&p)
+            .ok()
+            .map(|f| std::sync::Arc::new(std::sync::Mutex::new(f)))
+    });
     let mut child = child;
     // Unity says "InitializeEngineGraphics failed" when D3D11 device creation
     // refused; the UI turns that into actionable advice instead of silence.
@@ -2053,12 +2062,16 @@ fn capture_output(
         let tag = label.clone();
         let hit = gfx_hit.clone();
         let phit = prefix_hit.clone();
+        let trace_out = trace.clone();
         drains.push(std::thread::spawn(move || {
-            use std::io::{BufRead, BufReader};
+            use std::io::{BufRead, BufReader, Write};
             let reader = BufReader::new(o);
             for line in reader.lines() {
                 let Ok(line) = line else { break };
-                if !line.trim().is_empty() {
+                if let Some(f) = trace_out.as_ref() {
+                    let mut lock = f.lock().unwrap();
+                    writeln!(lock, "{line}").ok();
+                } else if !line.trim().is_empty() {
                     auth::log_line(&format!("[{tag}] {line}"));
                 }
                 if line.contains("InitializeEngineGraphics")
@@ -2076,12 +2089,16 @@ fn capture_output(
         let tag = label.clone();
         let hit = gfx_hit.clone();
         let phit = prefix_hit.clone();
+        let trace_err = trace.clone();
         drains.push(std::thread::spawn(move || {
-            use std::io::{BufRead, BufReader};
+            use std::io::{BufRead, BufReader, Write};
             let reader = BufReader::new(e);
             for line in reader.lines() {
                 let Ok(line) = line else { break };
-                if !line.trim().is_empty() {
+                if let Some(f) = trace_err.as_ref() {
+                    let mut lock = f.lock().unwrap();
+                    writeln!(lock, "{line}").ok();
+                } else if !line.trim().is_empty() {
                     auth::log_line(&format!("[{tag}] {line}"));
                 }
                 if line.contains("InitializeEngineGraphics")
@@ -4616,6 +4633,22 @@ impl App {
                     ));
                 }
             }
+            // Opt-in DLL load trace: IRIS_WINEDEBUG=1 exported before
+            // launching makes wine print every DLL load (+loaddll) and tees
+            // the child output into loaddll.log in the game dir (a trace is
+            // huge and would drown the launcher log). This is what settles
+            // which DLLs a game really loads when a placement is in doubt.
+            let wine_trace = std::env::var("IRIS_WINEDEBUG")
+                .map(|v| !v.is_empty() && v != "0")
+                .unwrap_or(false);
+            let trace_file = if wine_trace {
+                cmd.env("WINEDEBUG", "+loaddll");
+                let path = game_dir.join("loaddll.log");
+                auth::log_line(&format!("DLL load trace capturing to {}", path.display()));
+                Some(path)
+            } else {
+                None
+            };
             cmd.stdout(std::process::Stdio::piped());
             cmd.stderr(std::process::Stdio::piped());
             match cmd.spawn() {
@@ -4640,6 +4673,7 @@ impl App {
                         prefix.clone(),
                         self.launch_slot.clone(),
                         self.running_flag.clone(),
+                        trace_file,
                     );
                     self.status = format!(
                         "launched pid {} via {} (prefix {})",
@@ -4787,6 +4821,7 @@ impl App {
                         exe.parent().unwrap_or(Path::new(".")).to_path_buf(),
                         self.launch_slot.clone(),
                         self.running_flag.clone(),
+                        None,
                     );
                     self.status = if self.win_swap_landed == Some(false) {
                         format!("launched pid {pid}, runtime swap failed, see launcher.log")
@@ -5104,6 +5139,7 @@ impl App {
                         prefix.clone(),
                         self.launch_slot.clone(),
                         self.running_flag.clone(),
+                        None,
                     );
                     self.status = format!(
                         "launched pid {} via {} (prefix {})",
@@ -5135,6 +5171,7 @@ impl App {
                         exe.parent().unwrap_or(Path::new(".")).to_path_buf(),
                         self.launch_slot.clone(),
                         self.running_flag.clone(),
+                        None,
                     );
                     self.status = format!("launched pid {}", pid);
                 }
