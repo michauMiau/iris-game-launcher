@@ -1123,6 +1123,57 @@ const REVIVE_XR_BYTES: &[u8] = include_bytes!("../../assets/LibReviveXR64.dll");
 #[allow(dead_code)]
 const REVIVE_VR_BYTES: &[u8] = include_bytes!("../../assets/LibRevive64.dll");
 
+/// Replace Data/Plugins/OVRPlugin.dll with the ovrp shim: Unity Oculus
+/// plugin games load that file at boot and call its ovrp_* functions, and it
+/// cannot be intercepted any other way (the plugin statically links libovr
+/// and never loads LibOVRRT64_1.dll — proven by a complete +loaddll trace).
+/// The original is kept beside the file as OVRPlugin.dll.orig, and the shim
+/// bridges the plugin API into the Revive runtime we already place beside
+/// the exe. This must run on EVERY launch (see librevive_rt_step for why).
+#[cfg(not(target_os = "windows"))]
+fn ovrplugin_shim_step(game_dir: &Path) -> Option<PathBuf> {
+    const SHIM_BYTES: &[u8] = include_bytes!("../../assets/ovrplugin-shim.dll");
+    const SHIM_LEN: u64 = SHIM_BYTES.len() as u64;
+    if !game_dir.is_dir() {
+        return None;
+    }
+    let mut target: Option<PathBuf> = None;
+    if let Ok(rd) = std::fs::read_dir(game_dir) {
+        for e in rd.filter_map(|x| x.ok()) {
+            let p = e.path();
+            if p.is_dir()
+                && p.file_name()
+                    .map(|n| n.to_string_lossy().ends_with("_Data"))
+                    .unwrap_or(false)
+            {
+                let cand = p.join("Plugins").join("OVRPlugin.dll");
+                if cand.is_file() {
+                    target = Some(cand);
+                    break;
+                }
+            }
+        }
+    }
+    let target = target?;
+    if std::fs::read(&target)
+        .map(|b| b.len() as u64 == SHIM_LEN)
+        .unwrap_or(false)
+    {
+        return Some(target);
+    }
+    backup_beside(&target, SHIM_BYTES);
+    if std::fs::write(&target, SHIM_BYTES).is_ok() {
+        auth::log_line(&format!(
+            "OVRPlugin shim placed (original kept as {}): {}",
+            target.display(),
+            target.display()
+        ));
+        Some(target)
+    } else {
+        None
+    }
+}
+
 #[cfg(not(target_os = "windows"))]
 fn librevive_rt_step(game_dir: &Path, proton: Option<&std::path::Path>) -> Option<PathBuf> {
     if !game_dir.is_dir() {
@@ -4620,6 +4671,19 @@ impl App {
             // placed by an earlier version would otherwise never get the
             // Revive DLLs, and a DLL placed by an older version would never
             // be upgraded (the step is idempotent, so running it is cheap).
+            // Unity Oculus-plugin games never load LibOVRRT64_1.dll (the
+            // runtime is statically linked; the proof is in the complete
+            // loaddll trace), so no beside-exe placement can intercept them.
+            // The only interception point is OVRPlugin.dll itself: swap it for
+            // the ovrp shim, which bridges into the runtime we already place.
+            #[cfg(not(target_os = "windows"))]
+            if use_proton
+                && steamvr_runtime_root(&std::env::var("HOME").unwrap_or_default()).is_some()
+            {
+                if let Some(p) = ovrplugin_shim_step(game_dir) {
+                    auth::log_line(&format!("plugin shim placed: {}", p.display()));
+                }
+            }
             #[cfg(not(target_os = "windows"))]
             if use_proton
                 && steamvr_runtime_root(&std::env::var("HOME").unwrap_or_default()).is_some()
