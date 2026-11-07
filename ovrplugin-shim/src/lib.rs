@@ -94,8 +94,8 @@ pub fn compat_initialize() -> i32 {
     0
 }
 // ---- generated export stubs ----
-#[no_mangle]
-pub extern "C" fn ?ovrp_SetFunctionPointer@@YA?AW4ovrpResult@@W4ovrpFunctionType@@PEAX@Z() -> i32 {
+#[export_name = "?ovrp_SetFunctionPointer@@YA?AW4ovrpResult@@W4ovrpFunctionType@@PEAX@Z"]
+pub extern "C" fn ovrp_set_function_pointer_alias(a0: i32, a1: *mut std::os::raw::c_void) -> i32 {
     0
 }
 

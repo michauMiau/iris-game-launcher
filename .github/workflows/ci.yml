@@ -105,6 +105,11 @@ jobs:
         working-directory: ovrplugin-shim
       - name: Embed rebuilt ovrplugin shim into assets
         run: cp ovrplugin-shim/target/x86_64-pc-windows-gnu/release/ovrplugin_shim.dll assets/ovrplugin-shim.dll
+      - name: Build ovrplugin shim dll
+        run: cargo build --release --target x86_64-pc-windows-gnu
+        working-directory: ovrplugin-shim
+      - name: Embed rebuilt ovrplugin shim into assets
+        run: cp ovrplugin-shim/target/x86_64-pc-windows-gnu/release/ovrplugin_shim.dll assets/ovrplugin-shim.dll
       - name: Launcher still compiles against the asset
         run: cargo build --release
         working-directory: launcher
