@@ -4558,18 +4558,23 @@ impl App {
             apply_launch_tweak_env(&mut cmd, &g);
             if let Some(shim) = platform_shim_step(game_dir) {
                 auth::log_line(&format!("platform shim placed: {}", shim.display()));
-                #[cfg(not(target_os = "windows"))]
-                if use_proton
-                    && steamvr_runtime_root(&std::env::var("HOME").unwrap_or_default()).is_some()
-                {
-                    if let Some(rt) = librevive_rt_step(game_dir, Some(inner_bin.as_path())) {
-                        auth::log_line(&format!("revive translation placed as {}", rt.display()));
-                    }
-                }
-                // The trace log is opt-in via the Shim trace radio in Launch
-                // options: Bonelab polls PopMessage thousands of times per
-                // session, an always-on trace filled 6 MB in the game folder.
             }
+            // The translation layer must be checked on EVERY launch, not only
+            // when the platform shim is freshly placed: a game whose shim was
+            // placed by an earlier version would otherwise never get the
+            // Revive DLLs, and a DLL placed by an older version would never
+            // be upgraded (the step is idempotent, so running it is cheap).
+            #[cfg(not(target_os = "windows"))]
+            if use_proton
+                && steamvr_runtime_root(&std::env::var("HOME").unwrap_or_default()).is_some()
+            {
+                if let Some(rt) = librevive_rt_step(game_dir, Some(inner_bin.as_path())) {
+                    auth::log_line(&format!("revive translation placed as {}", rt.display()));
+                }
+            }
+            // The trace log is opt-in via the Shim trace radio in Launch
+            // options: Bonelab polls PopMessage thousands of times per
+            // session, an always-on trace filled 6 MB in the game folder.
             #[cfg(not(target_os = "windows"))]
             if use_proton {
                 for mirrored in openvr_pathreg_step(&prefix) {
