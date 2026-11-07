@@ -244,7 +244,7 @@ fn rt_step_places_openvr_revive_and_openvr_api() {
     let script = root.join("GE-Proton11-11").join("proton");
 
     let landed = crate::librevive_rt_step(&game, Some(&script)).expect("placement landed");
-    assert_eq!(landed.file_name().unwrap(), "LibOVRRT64_1.dll");
+    assert!(landed.ends_with("LibOVR.dll"));
     let rt2 = std::fs::read(game.join("LibOVR.dll")).unwrap();
     assert_eq!(rt2.len(), crate::REVIVE_VR_BYTES.len());
     let rt = std::fs::read(game.join("LibOVRRT64_1.dll")).unwrap();
