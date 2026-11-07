@@ -55,6 +55,10 @@ pub fn now_sec() -> f64 {
 
 static FRAMES: AtomicU32 = AtomicU32::new(0);
 
+pub fn trace_call(name: &str) {
+    record(name);
+}
+
 pub fn begin_frame() -> i32 {
     // Frame traffic is high-volume: log the first three frames and then one
     // every 600 (~10 s at 60 Hz), like the platform shim's null-poll
@@ -886,7 +890,7 @@ pub extern "C" fn ovrp_GetHmdToEyeOffset2() -> i32 {
 
 #[no_mangle]
 pub extern "C" fn ovrp_GetInitialized() -> i32 {
-    crate::initialized() as i32
+    crate::trace_call("ovrp_GetInitialized"); crate::initialized() as i32
 }
 
 #[no_mangle]
@@ -956,7 +960,7 @@ pub extern "C" fn ovrp_GetNativeSDKPointer2() -> i32 {
 
 #[no_mangle]
 pub extern "C" fn ovrp_GetNativeSDKVersion() -> *mut std::os::raw::c_void {
-    static V: &[u8] = b"1.43.0\0"; V.as_ptr() as *mut std::os::raw::c_void
+    crate::trace_call("ovrp_GetNativeSDKVersion"); static V: &[u8] = b"1.43.0\0"; V.as_ptr() as *mut std::os::raw::c_void
 }
 
 #[no_mangle]
@@ -1416,7 +1420,7 @@ pub extern "C" fn ovrp_GetUserPresent2() -> i32 {
 
 #[no_mangle]
 pub extern "C" fn ovrp_GetVersion() -> *mut std::os::raw::c_void {
-    static V: &[u8] = b"1.43.0\0"; V.as_ptr() as *mut std::os::raw::c_void
+    crate::trace_call("ovrp_GetVersion"); static V: &[u8] = b"1.43.0\0"; V.as_ptr() as *mut std::os::raw::c_void
 }
 
 #[no_mangle]

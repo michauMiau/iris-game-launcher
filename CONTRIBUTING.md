@@ -1,14 +1,28 @@
-# Contributing to Iris Game Launcher
+# Contributing guide for Iris Game Launcher
+
+Thanks for deciding to contribute to this project!
+We welcome help to this project.
+Generally most contributions will be accepted after careful review.
 
 The launcher is Rust (`launcher/`), plus two vendored shim crates (`shim/`, `ovrplugin-shim/`)
 that build Windows DLLs with the mingw-w64 target. Both shims are single files: the launcher
 embeds them via `include_bytes!` and copies them into game directories at launch time.
 
+Every change lands the same way:
+
+1. `cargo fmt --check` in `launcher/` — no diff allowed.
+2. `cargo test` (Linux host) and the same suite compiled for `x86_64-pc-windows-gnu`, executed under Wine — the Linux pass and the Wine pass are separate by design (they historically diverged; keep both green).
+3. `cargo clippy --quiet` for both targets must print **zero** warnings.
+4. Release builds for both targets.
+5. If you touch a shim crate, rebuild its DLL and copy it into `assets/`; the embedded-bytes test in `tests/assets.rs` guards that copy from drifting. CI rebuilds the shims on every `main` push, so a forgotten copy is caught there too.
+
+Then: `git commit`, `git push origin main`, CI must be green.
+
 ## Tech stack
 
 - **Runtime**: Rust, `x86_64` for the launcher itself; shim DLLs target `x86_64-pc-windows-gnu`.
 - **UI**: iced (native Rust GUI, no webviews).
-- **Packaging**: AppImage (Linux), single exe (Windows).
+- **Packaging**: AppImage (Linux), one exe (Windows). `bash pkg-iris.sh` builds both in `dist/`.
 - **Tests**: Rust unit tests in `launcher/src/tests/` (launch, vr, stop, assets, settings, fetcher, auth, i18n), Wine-translated pass through the exact same binaries CI runs.
 
 ## Repository layout
@@ -24,42 +38,12 @@ AGENTS.md          agent-facing architecture + build instructions (same short te
                    into every agent session through the plugin section)
 ```
 
-## Building
+## Contributing a language
 
-```bash
-# launcher (Linux or Windows target)
-cd launcher && cargo build --release
-cd launcher && cargo build --release --target x86_64-pc-windows-gnu
-
-# platform shim
-cd shim && cargo build --release --target x86_64-pc-windows-gnu
-cp target/x86_64-pc-windows-gnu/release/platform_shim.dll ../assets/platform-shim.dll
-
-# OVRPlugin shim
-cd ovrplugin-shim && cargo build --release --target x86_64-pc-windows-gnu
-cp target/x86_64-pc-windows-gnu/release/ovrplugin_shim.dll ../assets/ovrplugin-shim.dll
-```
-
-The mingw target needs the cross toolchain on Linux (`sudo apt-get install -y mingw-w64`) and
-`rustup target add x86_64-pc-windows-gnu`.
-
-## The gate (run everything, every time)
-
-1. `cargo fmt` in `launcher/`
-2. `cargo test` (Linux host) and the same suite compiled for `x86_64-pc-windows-gnu`, executed under Wine — the Linux pass and the Wine pass are separate by design (they historically diverged; keep both green)
-3. `cargo clippy --quiet` for both targets must print **zero** warnings
-4. Release builds for both targets
-5. `tests/assets.rs`: every vendored DLL in `assets/` must have a nonzero size
-
-CI runs the same commands on `main`, on Linux and Windows runners. Anything that fails there fails the merge.
-
-## Releases
-
-1. Gate green.
-2. `bash pkg-iris.sh` (AppImage + zip in `dist/`).
-3. `git commit`, `git push origin main`, wait for CI green.
-4. `git tag vX.Y.Z && git push origin vX.Y.Z`.
-5. `gh release create vX.Y.Z --target main --title "Iris Game Launcher vX.Y.Z" --notes "<text>" dist/IrisLauncher-x86_64.AppImage dist/IrisLauncher-x86_64.AppImage.zsync dist/IrisLauncher-win.zip`.
+The localizations for the project are stored in `launcher/src/i18n.rs`.
+The file is pretty self-explanatory; adding new languages is pretty easy.
+New keys go into both the EN and PL tables, and the i18n completeness test catches a missing row.
+Keep translations short and in the existing tone — user-facing strings only; internal log lines stay in English.
 
 ## Working on the shims
 
@@ -81,5 +65,11 @@ Both shims follow the same discipline:
   or not, swap landed or declined), never promises about live VR sessions.
 - Per-game mutable state lives beside the game (game dir or `<data_dir>/prefixes/<game>`), never
   in a single shared folder.
-- Tests are grouped by module under `launcher/src/tests/`, each `use crate::*`. No `#[test]` inside
-  module files. Anything a test needs becomes `pub(crate)`.
+- Tests are grouped by module under `launcher/src/tests/`, each `use crate::*`. No `#[test]` inside module files. Anything a test needs becomes `pub(crate)`.
+
+## Updating the compatibility list
+
+`docs/game-compatibility.md` tracks per-title status. A row moves only against a live run on
+the user's box — title, VR path used, exact symptom when it fails, and which log proved it.
+Never promote a row to "verified" on a stub or a local-only check. The OVRPlugin rows stay
+**experimental** until a captured VR session exists.
