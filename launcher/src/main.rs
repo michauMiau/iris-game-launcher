@@ -2064,10 +2064,15 @@ fn capture_output(
         let phit = prefix_hit.clone();
         let trace_out = trace.clone();
         drains.push(std::thread::spawn(move || {
+            // Read raw bytes: wine debug output carries non-UTF-8 garbage,
+            // and a lines()-based loop dies permanently on the first bad
+            // line, silently truncating the trace mid-run.
             use std::io::{BufRead, BufReader, Write};
-            let reader = BufReader::new(o);
-            for line in reader.lines() {
-                let Ok(line) = line else { break };
+            let mut reader = BufReader::new(o);
+            let mut buf = Vec::new();
+            while reader.read_until(b'\n', &mut buf).unwrap_or(0) > 0 {
+                let line = String::from_utf8_lossy(&buf).into_owned();
+                buf.clear();
                 if let Some(f) = trace_out.as_ref() {
                     let mut lock = f.lock().unwrap();
                     writeln!(lock, "{line}").ok();
@@ -2092,9 +2097,11 @@ fn capture_output(
         let trace_err = trace.clone();
         drains.push(std::thread::spawn(move || {
             use std::io::{BufRead, BufReader, Write};
-            let reader = BufReader::new(e);
-            for line in reader.lines() {
-                let Ok(line) = line else { break };
+            let mut reader = BufReader::new(e);
+            let mut buf = Vec::new();
+            while reader.read_until(b'\n', &mut buf).unwrap_or(0) > 0 {
+                let line = String::from_utf8_lossy(&buf).into_owned();
+                buf.clear();
                 if let Some(f) = trace_err.as_ref() {
                     let mut lock = f.lock().unwrap();
                     writeln!(lock, "{line}").ok();
