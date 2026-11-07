@@ -42,6 +42,7 @@ fn running_flag_clears_when_the_process_ends() {
         "test game".into(),
         std::path::PathBuf::from("/tmp"),
         slot.clone(),
+        None,
         flag.clone(),
     );
     for _ in 0..80 {
