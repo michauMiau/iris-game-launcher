@@ -242,6 +242,10 @@ fn rt_step_places_openvr_revive_and_openvr_api() {
     std::fs::create_dir_all(&dxvk).unwrap();
     std::fs::write(dxvk.join("openvr_api_dxvk.dll"), vec![b'9'; 4242]).unwrap();
     let script = root.join("GE-Proton11-11").join("proton");
+    // Pre-existing files (not our placements) trigger beside-backups.
+    std::fs::write(game.join("LibOVRRT64_1.dll"), vec![b'X'; 9999]).unwrap();
+    std::fs::write(game.join("LibOVR.dll"), vec![b'Y'; 8888]).unwrap();
+    std::fs::write(game.join("openvr_api64.dll"), vec![b'Z'; 7777]).unwrap();
 
     let landed = crate::librevive_rt_step(&game, Some(&script)).expect("placement landed");
     assert!(landed.ends_with("LibOVR.dll"));
@@ -251,6 +255,42 @@ fn rt_step_places_openvr_revive_and_openvr_api() {
     assert_eq!(rt.len(), crate::REVIVE_VR_BYTES.len());
     let api = std::fs::read(game.join("openvr_api64.dll")).unwrap();
     assert_eq!(api, vec![b'9'; 4242]);
+    // Originals kept beside each file, in the game dir, not centralized.
+    assert_eq!(
+        std::fs::read(game.join("LibOVRRT64_1.dll.orig")).unwrap(),
+        vec![b'X'; 9999]
+    );
+    assert_eq!(
+        std::fs::read(game.join("LibOVR.dll.orig")).unwrap(),
+        vec![b'Y'; 8888]
+    );
+    assert_eq!(
+        std::fs::read(game.join("openvr_api64.dll.orig")).unwrap(),
+        vec![b'Z'; 7777]
+    );
+    // A second run leaves the .orig files alone (first original wins).
+    crate::librevive_rt_step(&game, Some(&script));
+    assert_eq!(
+        std::fs::read(game.join("LibOVRRT64_1.dll.orig")).unwrap(),
+        vec![b'X'; 9999]
+    );
+
+    // Legacy centralized backup (pre per-game-per-dir era) migrates beside
+    // the file and wins over the current (already replaced) contents.
+    let legacy = root.join("xdg").join("iris-launcher").join("ovr-backup");
+    std::fs::create_dir_all(&legacy).unwrap();
+    std::fs::write(legacy.join("LibOVR.dll.orig"), vec![b'L'; 1111]).unwrap();
+    std::fs::remove_file(game.join("LibOVR.dll.orig")).unwrap();
+    crate::librevive_rt_step(&game, Some(&script));
+    assert_eq!(
+        std::fs::read(game.join("LibOVR.dll.orig")).unwrap(),
+        vec![b'L'; 1111]
+    );
+    assert!(!legacy.join("LibOVR.dll.orig").exists());
+    assert_eq!(
+        std::fs::read(game.join("LibOVR.dll")).unwrap().len(),
+        crate::REVIVE_VR_BYTES.len()
+    );
 
     std::fs::remove_dir_all(&root).ok();
     std::env::set_var("HOME", orig_home);

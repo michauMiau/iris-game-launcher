@@ -1054,6 +1054,40 @@ fn prefix_env(cmd: &mut std::process::Command, prefix: &Path) {
 /// MarrowEntitlement, "Entitlement Failed", then a NullReferenceException in
 /// SceneBootstrapper that kills the game right after the splash. The shim
 /// answers the entitlement call as entitled offline, no vendor runtime needed.
+/// Copies a replaced file's original bytes to `<name>.orig` beside the file
+/// itself, inside the game's own directory (migrating the old centralized
+/// `ovr-backup` copy on first use). Only created once, so the very first
+/// original seen is the one kept.
+fn backup_beside(target: &Path, ours: &[u8]) -> Option<PathBuf> {
+    let name = target
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())?;
+    let orig = target.with_file_name(format!("{name}.orig"));
+    if orig.is_file() {
+        return Some(orig);
+    }
+    let legacy = data_dir().join("ovr-backup").join(format!("{name}.orig"));
+    if legacy.is_file() {
+        if std::fs::rename(&legacy, &orig).is_ok() {
+            return Some(orig);
+        }
+        if std::fs::copy(&legacy, &orig).is_ok() {
+            std::fs::remove_file(&legacy).ok();
+            return Some(orig);
+        }
+    }
+    // No original known yet: preserve the current file only when it is not
+    // already one of our placements (never keep our own DLL as the
+    // "original" we may one day restore from).
+    let current_ours = std::fs::read(target)
+        .map(|b| b.len() == ours.len())
+        .unwrap_or(false);
+    if !current_ours && target.is_file() && std::fs::copy(target, &orig).is_ok() {
+        return Some(orig);
+    }
+    None
+}
+
 fn platform_shim_step(game_dir: &Path) -> Option<PathBuf> {
     if !game_dir.is_dir() {
         return None;
@@ -1069,6 +1103,7 @@ fn platform_shim_step(game_dir: &Path) -> Option<PathBuf> {
                 return None;
             }
         }
+        backup_beside(&target, data);
     }
     std::fs::write(&target, data).ok().map(|_| target)
 }
@@ -1104,20 +1139,26 @@ fn librevive_rt_step(game_dir: &Path, proton: Option<&std::path::Path>) -> Optio
             .map(|root| root.join("files/lib/wine/dxvk/x86_64-windows/openvr_api_dxvk.dll"));
         if let Some(dxvk) = dxvk.filter(|p| p.is_file()) {
             let target = game_dir.join("openvr_api64.dll");
+            let src = std::fs::read(&dxvk).unwrap_or_default();
             let same = std::fs::read(&target)
-                .map(|b| {
-                    std::fs::read(&dxvk)
-                        .map(|s| s.len() == b.len())
-                        .unwrap_or(false)
-                })
+                .map(|b| b.len() == src.len())
                 .unwrap_or(false);
             if !same {
-                let backup = data_dir().join("ovr-backup");
-                if target.is_file() && !backup.join("openvr_api64.dll.orig").exists() {
-                    std::fs::create_dir_all(&backup).ok();
-                    std::fs::copy(&target, backup.join("openvr_api64.dll.orig")).ok();
+                if target.is_file() {
+                    backup_beside(&target, &src);
                 }
-                if std::fs::copy(&dxvk, &target).is_ok() {
+                if std::fs::write(&target, &src).is_ok() {
+                    // The Proton image keeps the source read-only; make our
+                    // copy writable so later launcher updates can replace it.
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::fs::PermissionsExt;
+                        let mut perm = std::fs::metadata(&target)
+                            .map(|m| m.permissions())
+                            .unwrap_or_else(|_| std::fs::Permissions::from_mode(0o644));
+                        perm.set_mode(0o644);
+                        std::fs::set_permissions(&target, perm).ok();
+                    }
                     auth::log_line(&format!(
                         "openvr_api64.dll placed from proton dxvk layer: {}",
                         target.display()
@@ -1131,30 +1172,21 @@ fn librevive_rt_step(game_dir: &Path, proton: Option<&std::path::Path>) -> Optio
     // at the real Oculus runtime, which finds no Oculus service under Wine and
     // disables the headset plugin ("Security error. Oculus plugin is invalid").
     // Both names get the Revive replacement, originals backed up once.
-    let backup = data_dir().join("ovr-backup");
     let targets: Vec<PathBuf> = ["LibOVRRT64_1.dll", "LibOVR.dll"]
         .iter()
         .map(|name| game_dir.join(name))
         .collect();
     let mut landed = None;
     for target in targets {
-        let name = target
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_default();
         if target.is_file() {
-            let orig = backup.join(format!("{name}.orig"));
-            if !orig.exists() {
-                std::fs::create_dir_all(&backup).ok();
-                std::fs::copy(&target, &orig).ok();
-            }
-            if std::fs::read(&target)
-                .map(|b| b.len() == REVIVE_VR_BYTES.len())
-                .unwrap_or(false)
-            {
-                landed = Some(target);
-                continue;
-            }
+            backup_beside(&target, REVIVE_VR_BYTES);
+        }
+        if std::fs::read(&target)
+            .map(|b| b.len() == REVIVE_VR_BYTES.len())
+            .unwrap_or(false)
+        {
+            landed = Some(target);
+            continue;
         }
         if std::fs::write(&target, REVIVE_VR_BYTES).is_ok() {
             landed = Some(target);
