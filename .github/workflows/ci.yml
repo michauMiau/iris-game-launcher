@@ -103,12 +103,6 @@ jobs:
       - name: Build ovrplugin shim dll
         run: cargo build --release --target x86_64-pc-windows-gnu
         working-directory: ovrplugin-shim
-      - name: Verify ovrplugin shim exports match the real plugin
-        run: python3 -c "
-import pefile, sys
-shim = pefile.PE('ovrplugin-shim/target/x86_64-pc-windows-gnu/release/ovrplugin_shim.dll')
-real = pefile.PE('assets/ovrplugin-shim.ref/OVRPlugin.dll') if __import__('os').path.exists('assets/ovrplugin-shim.ref/OVRPlugin.dll') else None
-"
       - name: Embed rebuilt ovrplugin shim into assets
         run: cp ovrplugin-shim/target/x86_64-pc-windows-gnu/release/ovrplugin_shim.dll assets/ovrplugin-shim.dll
       - name: Launcher still compiles against the asset
