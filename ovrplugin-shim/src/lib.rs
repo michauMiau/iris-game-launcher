@@ -2,7 +2,9 @@
 // plugin ABI (ovrp_*, 411 names). Core init path implemented;
 // remaining exports are zero-stubs (never reach runtime state).
 use std::ffi::{c_char, c_int, c_void};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::fs::OpenOptions;
+use std::io::Write;
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::OnceLock;
 
 static INITIALIZED: AtomicBool = AtomicBool::new(false);
@@ -15,6 +17,35 @@ pub fn set_initialized(v: bool) {
     INITIALIZED.store(v, Ordering::Relaxed);
 }
 
+fn log_path() -> String {
+    std::env::var("OVR_SHIM_LOG").unwrap_or_else(|_| "C:\\iris-shim-trace.log".to_string())
+}
+
+/// Milliseconds since the DLL loaded, so traces compare against Unity log
+/// timestamps across Windows and Proton runs.
+fn now_ms() -> u64 {
+    static START: OnceLock<std::time::Instant> = OnceLock::new();
+    START.get_or_init(std::time::Instant::now).elapsed().as_millis() as u64
+}
+
+/// Mirrors the platform shim's record(): the trace goes wherever the
+/// `OVR_SHIM_LOG` env var points (the launcher's "Shim trace log" switch
+/// sets it per launch). Opening must never abort the game: a panic across
+/// an FFI boundary is UB, so an unwritable path stays silently off.
+fn record(name: &str) {
+    static FILE: OnceLock<Option<std::sync::Mutex<std::fs::File>>> = OnceLock::new();
+    let file = FILE.get_or_init(|| {
+        OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(log_path())
+            .ok()
+            .map(std::sync::Mutex::new)
+    });
+    let Some(f) = file else { return };
+    let _ = writeln!(f.lock().unwrap(), "{} {}", now_ms(), name);
+}
+
 pub fn now_sec() -> f64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -22,7 +53,16 @@ pub fn now_sec() -> f64 {
         .unwrap_or(0.0)
 }
 
+static FRAMES: AtomicU32 = AtomicU32::new(0);
+
 pub fn begin_frame() -> i32 {
+    // Frame traffic is high-volume: log the first three frames and then one
+    // every 600 (~10 s at 60 Hz), like the platform shim's null-poll
+    // heartbeat — liveness proof without log spam.
+    let n = FRAMES.fetch_add(1, Ordering::Relaxed) + 1;
+    if n <= 3 || n % 600 == 0 {
+        record(&format!("begin_frame {n}"));
+    }
     1 // ovrpBool.True: frame should render
 }
 
@@ -65,6 +105,7 @@ pub fn compat_initialize() -> i32 {
         LoadLibraryW(name.as_ptr())
     };
     if module == 0 {
+        record("compat_initialize: LibOVRRT64_1.dll not found");
         return -1003; // ovrError_InvalidOperation: no runtime found
     }
     let raw_init = unsafe {
@@ -74,21 +115,25 @@ pub fn compat_initialize() -> i32 {
         GetProcAddress(module, b"ovr_Create\0".as_ptr() as *const c_char)
     };
     if raw_init.is_null() || raw_create.is_null() {
+        record("compat_initialize: missing ovr_Initialize or ovr_Create");
         unsafe { let _ = FreeLibrary(module); }
         return -1003;
     }
     let ovr_initialize: FnOvrInitialize = unsafe { std::mem::transmute(raw_init) };
     let ovr_create: FnOvrCreate = unsafe { std::mem::transmute(raw_create) };
     if unsafe { ovr_initialize(std::ptr::null()) } != 0 {
+        record("compat_initialize: ovr_Initialize failed");
         unsafe { let _ = FreeLibrary(module); }
         return -1003;
     }
     let mut session: *mut c_void = std::ptr::null_mut();
     let mut hmd: *mut c_void = std::ptr::null_mut();
     if unsafe { ovr_create(&mut session, &mut hmd) } != 0 || session.is_null() {
+        record("compat_initialize: ovr_Create failed");
         unsafe { let _ = FreeLibrary(module); }
         return -1000;
     }
+    record("compat_initialize: session created");
     let _ = RUNTIME.set(Runtime { _module: module, session });
     INITIALIZED.store(true, Ordering::Relaxed);
     0
