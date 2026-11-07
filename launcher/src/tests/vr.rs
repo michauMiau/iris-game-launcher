@@ -222,3 +222,37 @@ fn wine64_found_beside_proton_layout() {
     assert_eq!(found, Some(proton.join("files/bin/wine64")));
     std::fs::remove_dir_all(&root).ok();
 }
+
+#[cfg(not(target_os = "windows"))]
+#[test]
+fn rt_step_places_openvr_revive_and_openvr_api() {
+    let _guard = crate::ENV_LOCK.lock().expect("env lock");
+    let orig_home = std::env::var("HOME").unwrap_or_default();
+    let orig_xdg = std::env::var("XDG_DATA_HOME").unwrap_or_default();
+    let root = std::env::temp_dir().join(format!("iris-rtstep-{}", std::process::id()));
+    std::fs::remove_dir_all(&root).ok();
+    std::env::set_var("HOME", &root);
+    std::env::set_var("XDG_DATA_HOME", root.join("xdg"));
+
+    let game = root.join("game");
+    std::fs::create_dir_all(&game).unwrap();
+    let dxvk = root
+        .join("GE-Proton11-11")
+        .join("files/lib/wine/dxvk/x86_64-windows");
+    std::fs::create_dir_all(&dxvk).unwrap();
+    std::fs::write(dxvk.join("openvr_api_dxvk.dll"), vec![b'9'; 4242]).unwrap();
+    let script = root.join("GE-Proton11-11").join("proton");
+
+    let landed = crate::librevive_rt_step(&game, Some(&script)).expect("placement landed");
+    assert_eq!(landed.file_name().unwrap(), "LibOVRRT64_1.dll");
+    let rt2 = std::fs::read(game.join("LibOVR.dll")).unwrap();
+    assert_eq!(rt2.len(), crate::REVIVE_VR_BYTES.len());
+    let rt = std::fs::read(game.join("LibOVRRT64_1.dll")).unwrap();
+    assert_eq!(rt.len(), crate::REVIVE_VR_BYTES.len());
+    let api = std::fs::read(game.join("openvr_api64.dll")).unwrap();
+    assert_eq!(api, vec![b'9'; 4242]);
+
+    std::fs::remove_dir_all(&root).ok();
+    std::env::set_var("HOME", orig_home);
+    std::env::set_var("XDG_DATA_HOME", orig_xdg);
+}

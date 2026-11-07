@@ -1079,10 +1079,50 @@ fn platform_shim_step(game_dir: &Path) -> Option<PathBuf> {
 /// reaches the SteamVR Linux runtime through Proton's OpenXR passthrough.
 const REVIVE_XR_BYTES: &[u8] = include_bytes!("../../assets/LibReviveXR64.dll");
 
+/// The OpenVR-backed Revive (VRClient/SteamVR path), used for the Linux
+/// beside-exe placement: Unity OVRPlugin games bind VR through OpenVR, and
+/// SteamVR exposes OpenVR natively, so this is the proven integration for
+/// these titles. The OpenXR-backed LibReviveXR64 is only for the Windows
+/// runtime replacement path, where it bridges into the XR runtime.
+const REVIVE_VR_BYTES: &[u8] = include_bytes!("../../assets/LibRevive64.dll");
+
 #[cfg(not(target_os = "windows"))]
-fn librevive_rt_step(game_dir: &Path) -> Option<PathBuf> {
+fn librevive_rt_step(game_dir: &Path, proton: Option<&std::path::Path>) -> Option<PathBuf> {
     if !game_dir.is_dir() {
         return None;
+    }
+    // LibRevive64 (OpenVR) imports openvr_api64.dll. Wine ships no such name,
+    // but GE-Proton ships DXVK's openvr_api_dxvk.dll, which is a compatible
+    // implementation of the OpenVR API client surface; renaming a copy to
+    // openvr_api64.dll beside the game satisfies the import. Without it the
+    // Revive DLL fails to load and the plugin reports invalid.
+    if let Some(script) = proton {
+        let dxvk = script
+            .parent()
+            .map(|root| root.join("files/lib/wine/dxvk/x86_64-windows/openvr_api_dxvk.dll"));
+        if let Some(dxvk) = dxvk.filter(|p| p.is_file()) {
+            let target = game_dir.join("openvr_api64.dll");
+            let same = std::fs::read(&target)
+                .map(|b| {
+                    std::fs::read(&dxvk)
+                        .map(|s| s.len() == b.len())
+                        .unwrap_or(false)
+                })
+                .unwrap_or(false);
+            if !same {
+                let backup = data_dir().join("ovr-backup");
+                if target.is_file() && !backup.join("openvr_api64.dll.orig").exists() {
+                    std::fs::create_dir_all(&backup).ok();
+                    std::fs::copy(&target, backup.join("openvr_api64.dll.orig")).ok();
+                }
+                if std::fs::copy(&dxvk, &target).is_ok() {
+                    auth::log_line(&format!(
+                        "openvr_api64.dll placed from proton dxvk layer: {}",
+                        target.display()
+                    ));
+                }
+            }
+        }
     }
     // Unity-era headset plugins resolve their libovr through LibOVR.dll beside
     // the plugin; replacing only LibOVRRT64_1.dll left that import path pointing
@@ -1107,14 +1147,14 @@ fn librevive_rt_step(game_dir: &Path) -> Option<PathBuf> {
                 std::fs::copy(&target, &orig).ok();
             }
             if std::fs::read(&target)
-                .map(|b| b.len() == REVIVE_XR_BYTES.len())
+                .map(|b| b.len() == REVIVE_VR_BYTES.len())
                 .unwrap_or(false)
             {
                 landed = Some(target);
                 continue;
             }
         }
-        if std::fs::write(&target, REVIVE_XR_BYTES).is_ok() {
+        if std::fs::write(&target, REVIVE_VR_BYTES).is_ok() {
             landed = Some(target);
         }
     }
@@ -4520,7 +4560,7 @@ impl App {
                 if use_proton
                     && steamvr_runtime_root(&std::env::var("HOME").unwrap_or_default()).is_some()
                 {
-                    if let Some(rt) = librevive_rt_step(game_dir) {
+                    if let Some(rt) = librevive_rt_step(game_dir, Some(inner_bin.as_path())) {
                         auth::log_line(&format!("revive translation placed as {}", rt.display()));
                     }
                 }
