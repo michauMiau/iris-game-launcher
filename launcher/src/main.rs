@@ -1077,6 +1077,7 @@ fn platform_shim_step(game_dir: &Path) -> Option<PathBuf> {
 /// LibOVRRT64_1.dll, the same file the Windows installer registers. It exports
 /// the ovr_* API the headset plugin expects and talks OpenXR underneath, which
 /// reaches the SteamVR Linux runtime through Proton's OpenXR passthrough.
+#[allow(dead_code)]
 const REVIVE_XR_BYTES: &[u8] = include_bytes!("../../assets/LibReviveXR64.dll");
 
 /// The OpenVR-backed Revive (VRClient/SteamVR path), used for the Linux
@@ -1084,6 +1085,7 @@ const REVIVE_XR_BYTES: &[u8] = include_bytes!("../../assets/LibReviveXR64.dll");
 /// SteamVR exposes OpenVR natively, so this is the proven integration for
 /// these titles. The OpenXR-backed LibReviveXR64 is only for the Windows
 /// runtime replacement path, where it bridges into the XR runtime.
+#[allow(dead_code)]
 const REVIVE_VR_BYTES: &[u8] = include_bytes!("../../assets/LibRevive64.dll");
 
 #[cfg(not(target_os = "windows"))]
