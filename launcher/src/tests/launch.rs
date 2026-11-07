@@ -17,8 +17,8 @@ fn capture_output_flags_graphics_failure() {
         "test game".into(),
         std::path::PathBuf::from("/tmp"),
         slot.clone(),
-        None,
         std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        None,
     );
     for _ in 0..160 {
         std::thread::sleep(std::time::Duration::from_millis(50));
@@ -51,8 +51,8 @@ fn capture_output_flags_prefix_version_mismatch() {
         "test game".into(),
         std::path::PathBuf::from("/tmp"),
         slot.clone(),
-        None,
         std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        None,
     );
     for _ in 0..160 {
         std::thread::sleep(std::time::Duration::from_millis(50));

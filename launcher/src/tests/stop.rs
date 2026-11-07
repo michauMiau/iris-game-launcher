@@ -42,8 +42,8 @@ fn running_flag_clears_when_the_process_ends() {
         "test game".into(),
         std::path::PathBuf::from("/tmp"),
         slot.clone(),
-        None,
         flag.clone(),
+        None,
     );
     for _ in 0..80 {
         std::thread::sleep(std::time::Duration::from_millis(50));
