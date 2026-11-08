@@ -4,3 +4,4 @@ target-release/
 *.log
 dist/
 __pycache__/
+*.AppImage
