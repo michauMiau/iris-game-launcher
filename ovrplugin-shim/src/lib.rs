@@ -33,17 +33,31 @@ fn now_ms() -> u64 {
 /// sets it per launch). Opening must never abort the game: a panic across
 /// an FFI boundary is UB, so an unwritable path stays silently off.
 fn record(name: &str) {
-    static FILE: OnceLock<Option<std::sync::Mutex<std::fs::File>>> = OnceLock::new();
+    // Cheap on the hot path (frames!), so re-attempts happen only when
+    // the previous open failed: a first-open failure used to be cached
+    // permanently (OnceLock<Option<..>>) which made the shim silent for
+    // the whole session on a transient sharing violation at engine boot.
+    static FILE: OnceLock<std::sync::Mutex<std::fs::File>> = OnceLock::new();
     let file = FILE.get_or_init(|| {
         OpenOptions::new()
             .create(true)
             .append(true)
             .open(log_path())
-            .ok()
             .map(std::sync::Mutex::new)
+            .expect("record() opened without OnceLock")
     });
-    let Some(f) = file else { return };
-    let _ = writeln!(f.lock().unwrap(), "{} {}", now_ms(), name);
+    if let Ok(mut f) = file.lock() {
+        let _ = writeln!(f, "{} {}", now_ms(), name);
+        let _ = f.flush();
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn DllMain(_h: *mut std::os::raw::c_void, reason: u32, _r: *mut std::os::raw::c_void) -> i32 {
+    if reason == 1 {
+        record("ovrplugin-shim loaded");
+    }
+    1
 }
 
 pub fn now_sec() -> f64 {
