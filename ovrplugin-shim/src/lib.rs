@@ -9,6 +9,11 @@ use std::sync::OnceLock;
 
 static INITIALIZED: AtomicBool = AtomicBool::new(false);
 
+/// Build label emitted as the first trace line so logs self-identify which
+/// shim build produced them (assets/ovrplugin-shim.dll is rebuilt from this
+/// repo's sources; the label here is the source of truth, then git tag).
+pub const SHIM_BUILD_LABEL: &str = "ovrplugin-shim 0.1.17";
+
 pub fn initialized() -> bool {
     INITIALIZED.load(Ordering::Relaxed)
 }
@@ -33,23 +38,26 @@ fn now_ms() -> u64 {
 /// sets it per launch). Opening must never abort the game: a panic across
 /// an FFI boundary is UB, so an unwritable path stays silently off.
 fn record(name: &str) {
-    // Cheap on the hot path (frames!), so re-attempts happen only when
-    // the previous open failed: a first-open failure used to be cached
-    // permanently (OnceLock<Option<..>>) which made the shim silent for
-    // the whole session on a transient sharing violation at engine boot.
-    static FILE: OnceLock<std::sync::Mutex<std::fs::File>> = OnceLock::new();
-    let file = FILE.get_or_init(|| {
-        OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(log_path())
-            .map(std::sync::Mutex::new)
-            .expect("record() opened without OnceLock")
-    });
-    if let Ok(mut f) = file.lock() {
-        let _ = writeln!(f, "{} {}", now_ms(), name);
-        let _ = f.flush();
+    // Gated by OVR_SHIM_LOG. The other shim's record() caches the file
+    // handle in a OnceLock: if its first open failed, it stayed silent
+    // for the whole session. Here every call re-opens, but a failed open
+    // just means this write is skipped (a panic across the FFI boundary
+    // is UB; the game keeps running either way). The very first record
+    // names the shim build so logs self-identify the place and version.
+    static BUILD_LABELED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    let Some(mut f) = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(log_path())
+        .ok()
+    else {
+        return;
+    };
+    if !BUILD_LABELED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+        let _ = writeln!(f, "{} shim-build {}", now_ms(), SHIM_BUILD_LABEL);
     }
+    let _ = writeln!(f, "{} {}", now_ms(), name);
+    let _ = f.flush();
 }
 
 #[no_mangle]
