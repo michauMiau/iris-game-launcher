@@ -2462,7 +2462,10 @@ impl App {
             dat_dir.join("launcher.log").to_string_lossy().into_owned(),
             log_reset,
         );
-        auth::log_line("=== launcher session start ===");
+        auth::log_line(&format!(
+            "=== launcher session start (iris-launcher v{}) ===",
+            env!("CARGO_PKG_VERSION")
+        ));
         let config_path = dat_dir.join("config.json");
         let store_path = dat_dir.join("games.json");
 
