@@ -142,6 +142,74 @@ pub fn compat_initialize() -> i32 {
     INITIALIZED.store(true, Ordering::Relaxed);
     0
 }
+
+// ---- init-path stubs with real descriptors ----
+//
+// Unity 2018.4's OVRPlugin wrapper rejects the plugin (and logs
+// "Security error. Oculus plugin is invalid!") when early calls return
+// zeros or nulls, then crashes dereferencing a null somewhere in
+// UnityPlayer. The HMD/Eye getters below return the fixed values the
+// pre-init path probes, sized for a Quest-2-class device. Extra probe
+// calls are traced once each so the trace names the exact rejection
+// point.
+//
+// HmdDesc (Quest 2 class): { resolution 1832x1920, pos 0, fov 0.92/1.22 }
+// EyeDesc  (per eye):      { texture 1832x1920, FOV from HmdDesc }
+// Sizes are legible in the trace; bump PROBE_FOV if apps mis-size.
+
+#[allow(non_camel_case_types)]
+#[repr(C)]
+pub struct HmdDesc {
+    pub resolution_w: u32,
+    pub resolution_h: u32,
+    pub pos_x: f32,
+    pub pos_y: f32,
+    pub pos_z: f32,
+    pub fov_x: f32,
+    pub fov_y: f32,
+    pub texture_size_w: u32,
+    pub texture_size_h: u32,
+}
+
+#[allow(non_camel_case_types)]
+#[repr(C)]
+pub struct EyeDesc {
+    pub resolution_w: u32,
+    pub resolution_h: u32,
+    pub fov_left: f32,
+    pub fov_right: f32,
+    pub fov_up: f32,
+    pub fov_down: f32,
+}
+
+pub fn get_hmd_desc(out: *mut HmdDesc) -> i32 {
+    record("get_hmd_desc (zeroed)");
+    if out.is_null() { return 0; }
+    unsafe {
+        std::ptr::write(out, HmdDesc {
+            resolution_w: 1832,
+            resolution_h: 1920,
+            pos_x: 0.0, pos_y: 0.0, pos_z: 0.0,
+            fov_x: 0.920, fov_y: 1.220,
+            texture_size_w: 1832,
+            texture_size_h: 1920,
+        });
+    }
+    1
+}
+
+pub fn get_eye_desc(out: *mut EyeDesc) -> i32 {
+    record("get_eye_desc (zeroed)");
+    if out.is_null() { return 0; }
+    unsafe {
+        std::ptr::write(out, EyeDesc {
+            resolution_w: 1832,
+            resolution_h: 1920,
+            fov_left: 0.460, fov_right: 0.460, fov_up: 0.610, fov_down: 0.610,
+        });
+    }
+    1
+}
 // ---- generated export stubs ----
 #[export_name = "?ovrp_SetFunctionPointer@@YA?AW4ovrpResult@@W4ovrpFunctionType@@PEAX@Z"]
 pub extern "C" fn ovrp_set_function_pointer_alias(a0: i32, a1: *mut std::os::raw::c_void) -> i32 {
