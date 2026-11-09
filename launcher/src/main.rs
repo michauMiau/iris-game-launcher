@@ -4567,10 +4567,12 @@ impl App {
         let exe = resolve_launch_path(&g.install_dir, &g.launch_exe);
         #[cfg(not(target_os = "windows"))]
         {
-            // covers downloaded from the store's CDN: the library is
-            // already fetching them for the tile UI; reuse for the icon.
-            let icon_path = None; // filled by tile cache if present; fallback launcher icon
-            write_game_desktop_entry(&g, icon_path);
+            // Covers already download to data_dir()/covers/<id>.img for the
+            // tile UI — reuse one so the .desktop entry can show the game's
+            // own icon instead of the launcher's.
+            let covers = self.data_root().join("covers");
+            let icon_path = covers.join(format!("{}.img", g.app_id));
+            write_game_desktop_entry(&g, Some(&icon_path));
         }
         #[cfg(not(target_os = "windows"))]
         {
