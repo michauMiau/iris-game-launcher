@@ -7166,7 +7166,7 @@ fn main() -> eframe::Result {
         app.rescan_dirs();
         let idx = app
             .store
-            .games
+            .apps
             .iter()
             .position(|g| &g.name == name || g.name.eq_ignore_ascii_case(name));
         let Some(idx) = idx else {

@@ -48,8 +48,24 @@ pub fn load(data_dir: &Path, app_id: &str) -> Vec<Achievement> {
 pub fn save(data_dir: &Path, app_id: &str, ids: &[String]) -> std::io::Result<()> {
     let dir = data_dir.join("achievements");
     fs::create_dir_all(&dir)?;
+    // Names/icons from Meta-side metadata survive a re-save: entries that
+    // were recorded earlier keep their fetched metadata instead of being
+    // rewritten as bare ids.
+    let known = load(data_dir, app_id);
+    let mut entries: Vec<Achievement> = Vec::new();
+    for id in ids {
+        if let Some(old) = known.iter().find(|a| &a.id == id) {
+            entries.push(old.clone());
+        } else {
+            entries.push(Achievement {
+                id: id.clone(),
+                name: String::new(),
+                icon: String::new(),
+            });
+        }
+    }
     let store = Store {
-        achievements: ids.iter().cloned().map(|id| Achievement { id }).collect(),
+        achievements: entries,
     };
     let json = serde_json::to_string_pretty(&store).unwrap_or_default();
     fs::write(store_path(data_dir, app_id), json)
@@ -60,7 +76,10 @@ pub fn collect(data_dir: &Path, game_dir: Option<&Path>) -> Vec<String> {
     let mut ids = Vec::new();
     let mut candidates: Vec<PathBuf> = Vec::new();
     if let Some(gd) = game_dir {
+        // Both shim traces live beside the exe: the platform shim's file and
+        // the plugin shim's distinct file.
         candidates.push(gd.join("iris-shim-trace.log"));
+        candidates.push(gd.join("iris-ovrplugin-trace.log"));
     }
     candidates.push(data_dir.join("iris-shim-trace.log"));
     // also any in data dir root? scan one level
