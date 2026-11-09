@@ -5784,13 +5784,16 @@ impl App {
                 if ach.is_empty() {
                     ui.label(tr(&self.config, "achievements_note"));
                 } else {
-                    ui.label(format!(
-                        "Achievements: {}",
-                        ach.iter()
-                            .map(|a| a.id.clone())
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    ));
+                    for a in &ach {
+                        let mut line = a.id.clone();
+                        if !a.name.is_empty() {
+                            line = format!("{} — {}", line, a.name);
+                        }
+                        if !a.icon.is_empty() {
+                            line = format!("{} [{}]", line, a.icon);
+                        }
+                        ui.label(line);
+                    }
                 }
                 if let Some(desc) = self.update_available() {
                     ui.colored_label(
