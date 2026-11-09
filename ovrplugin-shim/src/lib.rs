@@ -22,18 +22,38 @@ pub fn set_initialized(v: bool) {
     INITIALIZED.store(v, Ordering::Relaxed);
 }
 
+/// Trace directory resolution, in order:
+///   1. IRIS_OVR_TRACE_DIR (checked out-of-band by the user/launcher)
+///   2. OVR_SHIM_LOG when it names a directory (shared preset slot) — when
+///      it is a file path we keep appending into it, since the launcher
+///      knows where it collected it.
+///   3. process cwd (the game dir when launched by the launcher)
+fn trace_dir() -> Option<String> {
+    for key in ["IRIS_OVR_TRACE_DIR", "OVR_SHIM_LOG"] {
+        if let Ok(v) = std::env::var(key) {
+            if std::path::Path::new(&v).is_dir() {
+                let s = v.replace('/', "\\").trim_end_matches(['\\', '/']).to_string();
+                if !s.is_empty() {
+                    return Some(s);
+                }
+            }
+        }
+    }
+    None
+}
+
 fn log_path() -> String {
-    // Always a distinct file from the platform shim's iris-shim-trace.log
-    // (even when OVR_SHIM_LOG is set for the other shim): the launcher
-    // collects both from the game dir, and two appenders to one file made
-    // plugin-side silence indistinguishable from plugin-side absence.
+    let file = "iris-ovrplugin-trace.log".to_string();
+    if let Some(dir) = trace_dir() {
+        return format!("{dir}\\{file}");
+    }
     let cwd = std::env::current_dir()
         .map(|p| p.to_string_lossy().into_owned())
         .unwrap_or_else(|_| String::new());
     if cwd.is_empty() {
-        "iris-ovrplugin-trace.log".to_string()
+        file
     } else {
-        format!("{cwd}\\iris-ovrplugin-trace.log")
+        format!("{cwd}\\{file}")
     }
 }
 
@@ -54,17 +74,26 @@ fn record(name: &str) {
     // for the whole session. Here every call re-opens, but a failed open
     // just means this write is skipped (a panic across the FFI boundary
     // is UB; the game keeps running either way). The very first record
-    // names the shim build so logs self-identify the place and version.
+    // TRUNCATES the file first, so the log the user collects is always
+    // from THIS run (never leftover rows from an earlier one), then names
+    // the shim build so logs self-identify the place and version.
     static BUILD_LABELED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-    let Some(mut f) = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(log_path())
-        .ok()
-    else {
-        return;
+    let path = log_path();
+    let first_run = !BUILD_LABELED.swap(true, std::sync::atomic::Ordering::Relaxed);
+    let mut f = if first_run {
+        OpenOptions::new().create(true).write(true).truncate(true).open(&path)
+    } else {
+        OpenOptions::new().create(true).append(true).open(&path)
     };
-    if !BUILD_LABELED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+    // one more chance, append-mode, if the truncate open raced/lost
+    let mut f = match f {
+        Ok(f) => f,
+        Err(_) => match OpenOptions::new().create(true).append(true).open(&path) {
+            Ok(f) => f,
+            Err(_) => return,
+        },
+    };
+    if first_run {
         let _ = writeln!(f, "{} shim-build {}", now_ms(), SHIM_BUILD_LABEL);
     }
     let _ = writeln!(f, "{} {}", now_ms(), name);
