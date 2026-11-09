@@ -1905,6 +1905,18 @@ fn toggle_dll_override(env: &mut Vec<String>, item: &str, on: bool) -> bool {
         true
     } else {
         let Some(i) = idx else { return false };
+        // MelonLoader off: keep an explicit version.dll override but set
+        // it to builtin, instead of dropping the entry and hoping the
+        // default load order lands on the right dll.
+        if item == "version=n,b" {
+            let val = env[i]["WINEDLLOVERRIDES=".len()..].trim();
+            if override_contains(val, item) {
+                let val = val.replace("version=n,b", "version=b");
+                env[i] = format!("WINEDLLOVERRIDES={val}");
+                return true;
+            }
+            return false;
+        }
         match override_remove(env[i]["WINEDLLOVERRIDES=".len()..].trim(), item) {
             Some(rest) => env[i] = format!("WINEDLLOVERRIDES={rest}"),
             None => {
@@ -6687,7 +6699,7 @@ impl eframe::App for App {
                     ("Native dxgi", Preset::Dll("dxgi=n")),
                     // MelonLoader's version.dll proxy needs native-first
                     // lookup under Wine.
-                    ("MelonLoader proxy", Preset::Dll("version=n,b")),
+                    ("MelonLoader", Preset::Dll("version=n,b")),
                     ("Unity DX11", Preset::Arg("-force-gfx-directx11")),
                     ("Unity GL core", Preset::Arg("-force-glcore")),
                     // Writes every shim call into iris-shim-trace.log
