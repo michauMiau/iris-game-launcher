@@ -40,9 +40,12 @@ AGENTS.md          agent-facing architecture + build instructions (same short te
 
 ## Contributing a language
 
-The localizations for the project are stored in `launcher/src/i18n.rs`.
-The file is pretty self-explanatory; adding new languages is pretty easy.
-New keys go into both the EN and PL tables, and the i18n completeness test catches a missing row.
+The localizations for the project live in `launcher/languages/` — one file per language
+(e.g. `launcher/languages/en.rs`, `launcher/languages/pl.rs`), each exporting a
+`pub(crate) const` table of key/value pairs. `launcher/src/i18n.rs` includes them.
+Adding a language: copy an existing file, translate, add a variant to `Lang` and a parse
+arm, and wire it into `text()`. New keys go into every language table; the i18n
+completeness tests catch a missing row.
 Keep translations short and in the existing tone — user-facing strings only; internal log lines stay in English.
 
 ## Working on the shims
