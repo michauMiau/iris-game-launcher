@@ -12,6 +12,7 @@ use eframe::egui;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
+mod achievements;
 mod auth;
 mod fetcher;
 mod i18n;
@@ -5689,7 +5690,25 @@ impl App {
                 if g.meta_app_id.is_empty() {
                     ui.label(tr(&self.config, "card_folder_scan"));
                 }
-                ui.label(tr(&self.config, "achievements_note"));
+                let ids = achievements::collect(
+                    self.data_root(),
+                    Some(std::path::Path::new(&g.install_dir)),
+                );
+                if !ids.is_empty() {
+                    let _ = achievements::save(self.data_root(), &g.app_id, &ids);
+                }
+                let ach = achievements::load(self.data_root(), &g.app_id);
+                if ach.is_empty() {
+                    ui.label(tr(&self.config, "achievements_note"));
+                } else {
+                    ui.label(format!(
+                        "Achievements: {}",
+                        ach.iter()
+                            .map(|a| a.id.clone())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ));
+                }
                 if let Some(desc) = self.update_available() {
                     ui.colored_label(
                         egui::Color32::from_rgb(240, 200, 120),

@@ -1,3 +1,4 @@
+mod achievements;
 mod assets;
 mod auth;
 mod fetcher;
