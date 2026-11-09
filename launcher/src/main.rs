@@ -4547,7 +4547,18 @@ impl App {
         self.selected_branch = 0;
     }
 
-    fn launch(&mut self) {
+    fn run_launch_from_help(&mut self) {
+        #[cfg(not(target_os = "windows"))]
+        {
+            self.launch();
+        }
+        #[cfg(target_os = "windows")]
+        {
+            self.launch();
+        }
+    }
+
+    fn launch
         #[cfg_attr(target_os = "windows", allow(unused_mut))]
         let Some(mut g) = self.store.apps.get(self.selected).cloned() else {
             self.status = "no game selected".into();
@@ -7126,6 +7137,9 @@ impl eframe::App for App {
 
 fn main() -> eframe::Result {
     let args: Vec<String> = std::env::args().collect();
+    // Hidden --launch <name>: used by per-game .desktop entries created at
+    // launch (see write_game_desktop_entry) so the game gets its own
+    // taskbar/dock identity instead of the launcher's.
     if args.get(1).map(|a| a == "--launch").unwrap_or(false) {
         let Some(name) = args.get(2) else {
             println!("usage: --launch <game name>");
@@ -7138,7 +7152,7 @@ fn main() -> eframe::Result {
         app.rescan_dirs();
         let idx = app
             .store
-            .apps
+            .games
             .iter()
             .position(|g| &g.name == name || g.name.eq_ignore_ascii_case(name));
         let Some(idx) = idx else {
@@ -7147,7 +7161,7 @@ fn main() -> eframe::Result {
         };
         app.selected = idx;
         app.selected_branch = 0;
-        eprintln!("launching '{}' via --launch", name);
+        auth::log_line(&format!("headless --launch: {name}"));
         app.launch();
         println!("launched");
         return Ok(());
