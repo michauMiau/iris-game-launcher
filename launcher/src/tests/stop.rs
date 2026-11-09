@@ -1,3 +1,4 @@
+#[cfg(not(target_os = "windows"))]
 use crate::*;
 
 #[cfg(not(target_os = "windows"))]

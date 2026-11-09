@@ -248,8 +248,15 @@ fn truncated_asset_download_is_reported_not_accepted() {
     let port = listener.local_addr().unwrap().port();
     std::thread::spawn(move || {
         for mut stream in listener.incoming().flatten() {
-            use std::io::Write;
+            use std::io::{Read, Write};
+            // Windows runners reset loopback connections when the server
+            // answers before the request is fully read — consume the request
+            // first, then reply. On Linux the early reply worked, which is
+            // why this test passed locally and failed only on Windows.
+            let mut req = [0u8; 4096];
+            let _ = stream.read(&mut req);
             let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n");
+            let _ = stream.flush();
             let _ = stream.write_all(&[b'0'; 50]);
             let _ = stream.shutdown(std::net::Shutdown::Write);
         }
