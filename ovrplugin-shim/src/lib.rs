@@ -23,23 +23,17 @@ pub fn set_initialized(v: bool) {
 }
 
 fn log_path() -> String {
-    if let Ok(v) = std::env::var("OVR_SHIM_LOG") {
-        if !v.is_empty() {
-            return v;
-        }
-    }
-    // Cwd-relative next: the launcher starts the game with cwd = game dir,
-    // so a plain "iris-shim-trace.log" lands beside the exe — the same
-    // folder the platform shim is collected from. Falling back to a
-    // hardcoded drive root meant the two shims could silently write to
-    // two different files and the plugin side would look silent.
+    // Always a distinct file from the platform shim's iris-shim-trace.log
+    // (even when OVR_SHIM_LOG is set for the other shim): the launcher
+    // collects both from the game dir, and two appenders to one file made
+    // plugin-side silence indistinguishable from plugin-side absence.
     let cwd = std::env::current_dir()
         .map(|p| p.to_string_lossy().into_owned())
         .unwrap_or_else(|_| String::new());
     if cwd.is_empty() {
-        "iris-shim-trace.log".to_string()
+        "iris-ovrplugin-trace.log".to_string()
     } else {
-        format!("{cwd}\\iris-shim-trace.log")
+        format!("{cwd}\\iris-ovrplugin-trace.log")
     }
 }
 
