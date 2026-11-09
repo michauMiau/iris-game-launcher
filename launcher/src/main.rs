@@ -4559,18 +4559,7 @@ impl App {
         self.selected_branch = 0;
     }
 
-    fn run_launch_from_help(&mut self) {
-        #[cfg(not(target_os = "windows"))]
-        {
-            self.launch();
-        }
-        #[cfg(target_os = "windows")]
-        {
-            self.launch();
-        }
-    }
-
-    fn launch
+    fn launch(&mut self) {
         #[cfg_attr(target_os = "windows", allow(unused_mut))]
         let Some(mut g) = self.store.apps.get(self.selected).cloned() else {
             self.status = "no game selected".into();
@@ -6006,7 +5995,10 @@ impl eframe::App for App {
                 ui.heading(if settings {
                     tr(&self.config, "settings")
                 } else {
-                    format!("Iris game launcher {}", env!("CARGO_PKG_VERSION"))
+                    format!(
+                    "Iris game launcher {}",
+                    env!("CARGO_PKG_VERSION").trim_end_matches(".0")
+                )
                 });
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let library_sel = !settings;
