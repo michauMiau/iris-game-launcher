@@ -12,7 +12,7 @@ static INITIALIZED: AtomicBool = AtomicBool::new(false);
 /// Build label emitted as the first trace line so logs self-identify which
 /// shim build produced them (assets/ovrplugin-shim.dll is rebuilt from this
 /// repo's sources; the label here is the source of truth, then git tag).
-pub const SHIM_BUILD_LABEL: &str = "ovrplugin-shim 0.1.17";
+pub const SHIM_BUILD_LABEL: &str = "ovrplugin-shim 0.1.18";
 
 pub fn initialized() -> bool {
     INITIALIZED.load(Ordering::Relaxed)
@@ -23,7 +23,24 @@ pub fn set_initialized(v: bool) {
 }
 
 fn log_path() -> String {
-    std::env::var("OVR_SHIM_LOG").unwrap_or_else(|_| "C:\\iris-shim-trace.log".to_string())
+    if let Ok(v) = std::env::var("OVR_SHIM_LOG") {
+        if !v.is_empty() {
+            return v;
+        }
+    }
+    // Cwd-relative next: the launcher starts the game with cwd = game dir,
+    // so a plain "iris-shim-trace.log" lands beside the exe — the same
+    // folder the platform shim is collected from. Falling back to a
+    // hardcoded drive root meant the two shims could silently write to
+    // two different files and the plugin side would look silent.
+    let cwd = std::env::current_dir()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| String::new());
+    if cwd.is_empty() {
+        "iris-shim-trace.log".to_string()
+    } else {
+        format!("{cwd}\\iris-shim-trace.log")
+    }
 }
 
 /// Milliseconds since the DLL loaded, so traces compare against Unity log
