@@ -1034,7 +1034,7 @@ fn vr_runtime_dir_discovered() -> Option<std::path::PathBuf> {
 /// entry points back at this binary so the user can also launch the game
 /// from the app grid, and StartupWMClass is the launched exe's name, the
 /// class Wine already presents the game window under. No-op on Windows.
-fn write_game_desktop_entry(game: &Game, icon: Option<&Path>) {
+fn write_game_desktop_entry(game: &GameEntry, icon: Option<&Path>) {
     #[cfg(target_os = "windows")]
     {
         let _ = (game, icon);
@@ -1043,8 +1043,12 @@ fn write_game_desktop_entry(game: &Game, icon: Option<&Path>) {
     #[cfg(not(target_os = "windows"))]
     {
         let escaped = game.name.replace(['\n', '"'], "");
-        let exe = std::env::current_exe().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
-        if exe.is_empty() { return; }
+        let exe = std::env::current_exe()
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        if exe.is_empty() {
+            return;
+        }
         let icon = icon.and_then(|p| p.to_str()).unwrap_or("");
         let content = format!(
             "[Desktop Entry]\nType=Application\nName={}\nComment=Launch with Iris Game Launcher\nExec=\"{}\" --launch {}\nIcon={}\nTerminal=false\nCategories=Game;\nStartupWMClass={}\nX-Hermes-GameName={}",
@@ -1055,7 +1059,14 @@ fn write_game_desktop_entry(game: &Game, icon: Option<&Path>) {
             game.launch_exe.rsplit('/').next().unwrap_or(&game.launch_exe).trim_end_matches(".exe"),
             escaped,
         );
-        let dir = std::env::var("HOME").map(|h| PathBuf::from(h).join(".local").join("share").join("applications")).unwrap_or_else(|_| PathBuf::from("/tmp"));
+        let dir = std::env::var("HOME")
+            .map(|h| {
+                PathBuf::from(h)
+                    .join(".local")
+                    .join("share")
+                    .join("applications")
+            })
+            .unwrap_or_else(|_| PathBuf::from("/tmp"));
         let _ = std::fs::create_dir_all(&dir);
         let _ = std::fs::write(dir.join(format!(".iris-{}.desktop", game.name)), content);
         auth::log_line(&format!("desktop entry registered for {}", game.name));
