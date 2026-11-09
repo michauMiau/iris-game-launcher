@@ -6006,7 +6006,7 @@ impl eframe::App for App {
                 ui.heading(if settings {
                     tr(&self.config, "settings")
                 } else {
-                    "Iris Game Launcher".to_string()
+                    format!("Iris game launcher {}", env!("CARGO_PKG_VERSION"))
                 });
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let library_sel = !settings;
