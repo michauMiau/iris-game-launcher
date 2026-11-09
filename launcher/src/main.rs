@@ -5038,6 +5038,11 @@ impl App {
                 if !toggle_env_entry(&mut env, key, &value, on) {
                     return;
                 }
+                // Same switch also gives the OVR plugin shim its own trace
+                // directory (its distinct iris-ovrplugin-trace.log lives
+                // there). The user can override IRIS_OVR_TRACE_DIR in the
+                // launch tweaks afterward.
+                toggle_env_entry(&mut env, "IRIS_OVR_TRACE_DIR", &dir, on);
                 self.tweak_env = env.join("\n");
             }
         }
