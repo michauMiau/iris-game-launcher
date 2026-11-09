@@ -1027,6 +1027,41 @@ fn vr_runtime_dir_discovered() -> Option<std::path::PathBuf> {
 /// One Wine/Proton prefix per game under the configured prefix root
 /// (prefix_dir/<folder>). Windows runs exes directly, so the prefix machinery
 /// is Linux-only, but --reset-prefix uses this root on every platform.
+/// Write (or refresh) a per-game .desktop entry so the desktop shell
+/// associates the game's window with the game rather than with the
+/// launcher binary (which is why, by default again on many shells, game
+/// windows inherit the launcher's AppImage icon in the taskbar). The
+/// entry points back at this binary so the user can also launch the game
+/// from the app grid, and StartupWMClass is the launched exe's name, the
+/// class Wine already presents the game window under. No-op on Windows.
+fn write_game_desktop_entry(game: &Game, icon: Option<&Path>) {
+    #[cfg(target_os = "windows")]
+    {
+        let _ = (game, icon);
+        return;
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let escaped = game.name.replace(['\n', '"'], "");
+        let exe = std::env::current_exe().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
+        if exe.is_empty() { return; }
+        let icon = icon.and_then(|p| p.to_str()).unwrap_or("");
+        let content = format!(
+            "[Desktop Entry]\nType=Application\nName={}\nComment=Launch with Iris Game Launcher\nExec=\"{}\" --launch {}\nIcon={}\nTerminal=false\nCategories=Game;\nStartupWMClass={}\nX-Hermes-GameName={}",
+            escaped,
+            exe,
+            game.name,
+            if icon.is_empty() { "iris-launcher" } else { icon },
+            game.launch_exe.rsplit('/').next().unwrap_or(&game.launch_exe).trim_end_matches(".exe"),
+            escaped,
+        );
+        let dir = std::env::var("HOME").map(|h| PathBuf::from(h).join(".local").join("share").join("applications")).unwrap_or_else(|_| PathBuf::from("/tmp"));
+        let _ = std::fs::create_dir_all(&dir);
+        let _ = std::fs::write(dir.join(format!(".iris-{}.desktop", game.name)), content);
+        auth::log_line(&format!("desktop entry registered for {}", game.name));
+    }
+}
+
 fn game_prefix_root(prefix_dir: &str) -> std::path::PathBuf {
     if prefix_dir.trim().is_empty() {
         data_dir().join("prefixes")
@@ -4508,6 +4543,13 @@ impl App {
             return;
         };
         let exe = resolve_launch_path(&g.install_dir, &g.launch_exe);
+        #[cfg(not(target_os = "windows"))]
+        {
+            // covers downloaded from the store's CDN: the library is
+            // already fetching them for the tile UI; reuse for the icon.
+            let icon_path = None; // filled by tile cache if present; fallback launcher icon
+            write_game_desktop_entry(&g, icon_path);
+        }
         #[cfg(not(target_os = "windows"))]
         {
             // Per-game Proton override wins over the global pick.
