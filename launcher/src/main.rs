@@ -7126,6 +7126,32 @@ impl eframe::App for App {
 
 fn main() -> eframe::Result {
     let args: Vec<String> = std::env::args().collect();
+    if args.get(1).map(|a| a == "--launch").unwrap_or(false) {
+        let Some(name) = args.get(2) else {
+            println!("usage: --launch <game name>");
+            std::process::exit(64);
+        };
+        // This is how per-game .desktop entries launch a game directly from
+        // the app grid: set the selected game, then let the normal launch()
+        // path run it (SteamVR env, prefix, shim placement included).
+        let mut app = App::new(false);
+        app.rescan_dirs();
+        let idx = app
+            .store
+            .apps
+            .iter()
+            .position(|g| &g.name == name || g.name.eq_ignore_ascii_case(name));
+        let Some(idx) = idx else {
+            eprintln!("unknown game: {name}");
+            std::process::exit(2);
+        };
+        app.selected = idx;
+        app.selected_branch = 0;
+        eprintln!("launching '{}' via --launch", name);
+        app.launch();
+        println!("launched");
+        return Ok(());
+    }
     if args.get(1).map(|a| a == "rescan").unwrap_or(false) {
         let mut app = App::new(false);
         app.rescan_dirs();

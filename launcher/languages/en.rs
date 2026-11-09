@@ -33,7 +33,7 @@ pub(crate) const EN: &[(&str, &str)] = &[
     ("played_today", "played today"),
     ("played_yesterday", "played yesterday"),
     ("played_days", "played {n} days ago"),
-    ("achievements_note", "Achievements section lands in a future version"),
+    ("achievements_note", "No achievements logged yet (unlock with Shim trace log on)."),
     ("channel_label", "Channel:"),
     ("import_match_title", "Which library game is this folder?"),
     ("import_match_none", "None of them, import as a plain folder"),
