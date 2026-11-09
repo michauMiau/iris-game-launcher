@@ -84,15 +84,18 @@ fn toggles_touch_only_their_own_entry() {
     let mut mid = vec!["WINEDLLOVERRIDES=a=n,version=n,b,c=b".to_string()];
     assert!(toggle_dll_override(&mut mid, "version=n,b", false));
     assert_eq!(
-        mid[0], "WINEDLLOVERRIDES=a=n,c=b",
-        "neighbour entries survive"
+        mid[0], "WINEDLLOVERRIDES=a=n,version=b,c=b",
+        "neighbour entries survive; MelonLoader off keeps version=b"
     );
     assert!(has_dll_override(&env, "version=n,b"));
     assert!(toggle_dll_override(&mut env, "version=n,b", false));
     assert_eq!(
         env,
-        vec!["GAME=1".to_string()],
-        "empty override line removed"
+        vec![
+            "WINEDLLOVERRIDES=version=b".to_string(),
+            "GAME=1".to_string()
+        ],
+        "MelonLoader off substitutes version=b instead of blank"
     );
     let mut args = vec!["-force-gfx-directx11".to_string()];
     assert!(toggle_arg(&mut args, "-force-glcore", true));
