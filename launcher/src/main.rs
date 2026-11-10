@@ -5492,7 +5492,7 @@ impl App {
         let installed = !g.install_dir.is_empty() && !g.partial;
         ui.horizontal(|ui| {
             // No arrow glyph in egui's bundled font; plain words instead.
-            if ui.button("Back to library").clicked() {
+            if ui.button(tr(&self.config, "back_to_library")).clicked() {
                 self.open_game = None;
                 // An Uninstall popup belongs to the game page; leaving it open
                 // across navigation keeps it pointed at a stale index.
@@ -5928,7 +5928,10 @@ impl eframe::App for App {
                     });
                     ui.label(marker);
                     if signed {
-                        ui.label(format!("{owned} owned games"));
+                        ui.label(i18n::fill(
+                            &tr(&self.config, "owned_games"),
+                            &[("owned", &owned.to_string())],
+                        ));
                     }
                 });
                 // The download line moved to the top of the page; the bottom
@@ -5986,13 +5989,22 @@ impl eframe::App for App {
                             .fit_to_exact_size(egui::vec2(side * aspect.max(1.0), side)),
                     );
                 }
-                ui.heading(if settings {
+                let title = if settings {
                     tr(&self.config, "settings")
                 } else {
-                    format!(
-                    "Iris game launcher {}",
-                    env!("CARGO_PKG_VERSION").trim_end_matches(".0")
-                )
+                    "Iris game launcher".to_string()
+                };
+                ui.heading(title);
+                // Version: small font, centered below the title text, inside
+                // the same header row (not a separate bar).
+                let head_size = ui.style().text_styles[&egui::TextStyle::Heading].size;
+                ui.centered_and_justified(|ui| {
+                    ui.add(
+                        egui::Label::new(
+                            egui::RichText::new(env!("CARGO_PKG_VERSION").trim_end_matches(".0"))
+                                .size(head_size * 0.55),
+                        ),
+                    );
                 });
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let library_sel = !settings;
@@ -6087,7 +6099,7 @@ impl eframe::App for App {
                         ui.set_min_width(sect_w);
                         ui.set_max_width(sect_w);
                         ui.label(tr(&self.config, "settings_folders"));
-                        ui.label("Prefix dir:");
+                        ui.label(tr(&self.config, "prefix_dir"));
                         ui.horizontal(|ui| {
                             if ui.add(
                             egui::TextEdit::singleline(&mut self.config.prefix_dir)
@@ -6097,7 +6109,7 @@ impl eframe::App for App {
                         {
                                 self.save_config();
                             }
-                            if ui.button("Pick folder").clicked() {
+                            if ui.button(tr(&self.config, "pick_folder")).clicked() {
                                 let start = if self.config.prefix_dir.is_empty() {
                                     std::path::PathBuf::from("/")
                                 } else {
@@ -6108,7 +6120,7 @@ impl eframe::App for App {
                         });
                         #[cfg(not(target_os = "windows"))]
                         {
-                            ui.label("Wine binary (used when no Proton picked):");
+                            ui.label(tr(&self.config, "wine_binary_hint"));
                             if ui.add(
                             egui::TextEdit::singleline(&mut self.config.wine_binary)
                                 .desired_width(ui.available_width()),
@@ -6118,7 +6130,7 @@ impl eframe::App for App {
                                 self.save_config();
                             }
                         }
-                        ui.label("Download dir (store downloads unpack here):");
+                        ui.label(tr(&self.config, "download_dir_hint"));
                         ui.horizontal(|ui| {
                             if ui.add(
                             egui::TextEdit::singleline(&mut self.config.download_dir)
@@ -6128,7 +6140,7 @@ impl eframe::App for App {
                         {
                                 self.save_config();
                             }
-                            if ui.button("Pick folder").clicked() {
+                            if ui.button(tr(&self.config, "pick_folder")).clicked() {
                                 let start = if self.config.download_dir.is_empty() {
                                     std::path::PathBuf::from("/")
                                 } else {
@@ -6145,14 +6157,14 @@ impl eframe::App for App {
                             };
                             self.dir_popup = Some((start, DirTarget::Import));
                         }
-                        if ui.button("Open download dir").clicked() {
+                        if ui.button(tr(&self.config, "open_download_dir")).clicked() {
                             let dir = PathBuf::from(&self.config.download_dir);
                             self.status = match open_folder(&dir) {
                                 Ok(()) => format!("opened {}", dir.display()),
                                 Err(e) => e,
                             };
                         }
-                        if ui.button("Open log file").clicked() {
+                        if ui.button(tr(&self.config, "open_log_file")).clicked() {
                             if let Some(p) = auth::log_path() {
                                 self.status = match open_folder(Path::new(&p)) {
                                     Ok(()) => format!("opened log folder: {p}"),
@@ -6185,7 +6197,7 @@ impl eframe::App for App {
                             }
                             let found = detect_protons(&self.config.proton_dirs);
                             if found.is_empty() {
-                                ui.label("no proton runscript found in those dirs");
+                                ui.label(tr(&self.config, "no_proton_found"));
                             }
                             // Dropdown instead of a radio wall; paths shown short.
                             let picked = if self.config.proton_selected.is_empty() {
@@ -6242,7 +6254,7 @@ impl eframe::App for App {
                         ui.set_max_width(sect_w);
                             ui.label(tr(&self.config, "proton_ge_hint"));
                             ui.label(tr(&self.config, "proton_ge_reco"));
-                            if ui.button("Choose a Proton version").clicked() {
+                            if ui.button(tr(&self.config, "choose_proton_version")).clicked() {
                                 self.proton_popup = true;
                                 if self.proton_releases.is_empty() {
                                     self.load_releases("GloriousEggroll/proton-ge-custom");
@@ -6253,8 +6265,8 @@ impl eframe::App for App {
                         ui.set_min_width(sect_w);
                         ui.set_max_width(sect_w);
                         ui.label(tr(&self.config, "settings_data"));
-                        ui.label(format!("data root: {}", self.store_path.parent().unwrap_or(Path::new(".")).display()));
-                        if ui.button("Save config").clicked() {
+                        ui.label(i18n::fill(&tr(&self.config, "data_root"), &[("root", &self.store_path.parent().unwrap_or(Path::new(".")).display().to_string())]));
+                        if ui.button(tr(&self.config, "save_config")).clicked() {
                             match serde_json::to_string_pretty(&self.config) {
                                 Ok(s) => {
                                     // "config saved" must mean the bytes landed;
@@ -6315,7 +6327,7 @@ impl eframe::App for App {
                             }
                         });
                         #[cfg(any(target_os = "linux", target_os = "windows"))]
-                        ui.label(format!("headset link handler: {}", auth::handler_status()));
+                        ui.label(i18n::fill(&tr(&self.config, "headset_link_handler"), &[("status", &auth::handler_status())]));
                         ui.label(tr(&self.config, "login_step_2"));
                         ui.horizontal(|ui| {
                             if ui.button(tr(&self.config, "login_btn")).clicked() {
@@ -6368,7 +6380,7 @@ impl eframe::App for App {
                                 "stored, not applied"
                             }
                         ));
-                        ui.label(format!("token kind: {}", token_kind(&self.session.token)));
+                        ui.label(i18n::fill(&tr(&self.config, "token_kind"), &[("kind", token_kind(&self.session.token))]));
                         // Persist on change like the store-id field: closing the
                         // app without saving used to discard the paste. The token
                         // is masked by default; reveal shows what got pasted.
@@ -6839,7 +6851,7 @@ impl eframe::App for App {
                         if let Some(pp) = self.install_prompt.as_mut() {
                             ui.add(egui::TextEdit::singleline(&mut pp.dir).desired_width(260.0));
                         }
-                        if ui.button("Pick folder").clicked() {
+                        if ui.button(tr(&self.config, "pick_folder")).clicked() {
                             let start = self
                                 .install_prompt
                                 .as_ref()
