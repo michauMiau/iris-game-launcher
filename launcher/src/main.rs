@@ -5995,17 +5995,15 @@ impl eframe::App for App {
                     "Iris game launcher".to_string()
                 };
                 ui.heading(title);
-                // Version: small font, centered below the title text, inside
-                // the same header row (not a separate bar).
+                // Version right after the title text: small font, inline in
+                // the same horizontal row — no justify/layout claim, which
+                // put it in the middle of the window instead of beside the
+                // heading.
                 let head_size = ui.style().text_styles[&egui::TextStyle::Heading].size;
-                ui.centered_and_justified(|ui| {
-                    ui.add(
-                        egui::Label::new(
-                            egui::RichText::new(env!("CARGO_PKG_VERSION").trim_end_matches(".0"))
-                                .size(head_size * 0.55),
-                        ),
-                    );
-                });
+                ui.label(
+                    egui::RichText::new(env!("CARGO_PKG_VERSION").trim_end_matches(".0"))
+                        .size(head_size * 0.55),
+                );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let library_sel = !settings;
                     if ui
