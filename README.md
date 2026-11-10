@@ -5,10 +5,11 @@
 </div>
 
 <div align="center">
-A lightweight replacement for the Meta Quest Link (formerly Oculus)
+A lightweight replacement for the Meta Quest Link App.
+  
 Play all your bought games on Linux and Windows.
 
-Use your system resources for your games, not the launcher.
+<h5>Use your system resources for your games, not the launcher.</h5>
 </div>
 
 <div align="center">
