@@ -12,9 +12,28 @@ static INITIALIZED: AtomicBool = AtomicBool::new(false);
 /// Build label emitted as the first trace line so logs self-identify which
 /// shim build produced them (assets/ovrplugin-shim.dll is rebuilt from this
 /// repo's sources; the label here is the source of truth, then git tag).
-pub const SHIM_BUILD_LABEL: &str = "ovrplugin-shim 0.1.18";
+pub const SHIM_BUILD_LABEL: &str = "ovrplugin-shim 0.1.19";
 
+/// Lazy bring-up: Unity's Oculus integration polls GetInitialized without
+/// ever calling Initialize on this plugin build (measured on Boneworks:
+/// version reads then repeated GetInitialized polls, no Initialize record).
+/// On the first poll, try loading LibOVRRT64_1.dll beside the exe and
+/// creating a session; if it succeeds, report initialized true. Attempts
+/// are recorded once, so the trace shows why a poll stayed false.
 pub fn initialized() -> bool {
+    if !INITIALIZED.load(Ordering::Relaxed) {
+        lazy_runtime_once();
+    }
+    if INITIALIZED.load(Ordering::Relaxed) {
+        return true;
+    }
+    // Controlled experiment knob: IRIS_OVR_FAKE_INIT=1 reports initialized
+    // even without a created session, so Unity's Oculus integration stops
+    // waiting on the poll and proceeds to its follow-up plugin calls — the
+    // trace then shows what it asks for next instead of guessing.
+    if fake_init_enabled() {
+        return true;
+    }
     INITIALIZED.load(Ordering::Relaxed)
 }
 
@@ -161,6 +180,35 @@ extern "system" {
 /// LibOVRRT64_1.dll, runs ovr_Initialize + ovr_Create, and keeps the
 /// session alive for the process lifetime. Idempotent; safe to call twice.
 /// Returns OVRP_SUCCESS (0) or a failure code.
+static LAZY_TRIED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+fn fake_init_enabled() -> bool {
+    static LABELED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    let on = std::env::var("IRIS_OVR_FAKE_INIT")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+    if on && !LABELED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+        record("fake-init: IRIS_OVR_FAKE_INIT on, reporting initialized without a session");
+    }
+    on
+}
+
+
+/// Attempted once per process, on a separate thread: Revive's runtime can
+/// block inside ovr_Initialize while it tries to reach vrserver, and that
+/// must never hang Unity's GetInitialized poll loop. The poll keeps
+/// returning the current flag until a session actually gets created.
+fn lazy_runtime_once() {
+    if LAZY_TRIED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+        return;
+    }
+    record("lazy-runtime: attempting LibOVRRT64_1.dll beside the exe (threaded)");
+    std::thread::spawn(|| {
+        let rc = compat_initialize();
+        record(&format!("lazy-runtime: compat_initialize rc {rc}"));
+    });
+}
+
 pub fn compat_initialize() -> i32 {
     if RUNTIME.get().is_some() {
         INITIALIZED.store(true, Ordering::Relaxed);

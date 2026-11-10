@@ -5017,6 +5017,16 @@ impl App {
                 self.tweak_env = env.join("\n");
             }
             Preset::Env(key) => {
+                if key == "IRIS_OVR_FAKE_INIT" {
+                    // Experiment knob: the plugin shim reports initialized
+                    // without a created session (see ovrplugin-shim trace).
+                    let mut env = env_lines(&self.tweak_env);
+                    if !toggle_env_entry(&mut env, key, "1", on) {
+                        return;
+                    }
+                    self.tweak_env = env.join("\n");
+                    return;
+                }
                 let dir = self.store.apps.get(idx).and_then(|g| {
                     if g.install_dir.is_empty() {
                         None
@@ -6705,6 +6715,10 @@ impl eframe::App for App {
                     // next to the exe. Off by default: Bonelab polls the
                     // message queue thousands of times per session.
                     ("Shim trace log", Preset::Env("OVR_SHIM_LOG")),
+                    // Controlled plugin experiment: reports initialized
+                    // without a session so Unity stops polling and reveals
+                    // its follow-up plugin calls in the trace.
+                    ("Fake plugin init", Preset::Env("IRIS_OVR_FAKE_INIT")),
                 ];
                 #[cfg(not(target_os = "windows"))]
                 // Proton's OpenVR/OpenXR bridge needs the native runtime
