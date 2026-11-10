@@ -1,6 +1,6 @@
 # Game compatibility
 
-## Known working (verified in-headset)
+## Known working (verified)
 
 | Title | State |
 |---|---|
