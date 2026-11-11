@@ -192,19 +192,41 @@ fn fake_init_enabled() -> bool {
 }
 
 
+
+fn sync_init_enabled() -> bool {
+    std::env::var("IRIS_OVR_SYNC_INIT")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+}
+
 /// Attempted once per process, on a separate thread: Revive's runtime can
 /// block inside ovr_Initialize while it tries to reach vrserver, and that
 /// must never hang Unity's GetInitialized poll loop. The poll keeps
 /// returning the current flag until a session actually gets created.
+
+fn runtime_dll_path() -> Option<std::path::PathBuf> {
+    std::env::current_exe().ok().and_then(|exe| {
+        let dir = exe.parent()?;
+        let p = dir.join("LibOVRRT64_1.dll");
+        if p.exists() { Some(p) } else { None }
+    })
+}
+
 fn lazy_runtime_once() {
     if LAZY_TRIED.swap(true, std::sync::atomic::Ordering::Relaxed) {
         return;
     }
-    record("lazy-runtime: attempting LibOVRRT64_1.dll beside the exe (threaded)");
-    std::thread::spawn(|| {
+    if sync_init_enabled() {
+        record("lazy-runtime: attempting LibOVRRT64_1.dll beside the exe (sync, IRIS_OVR_SYNC_INIT)");
         let rc = compat_initialize();
         record(&format!("lazy-runtime: compat_initialize rc {rc}"));
-    });
+    } else {
+        record("lazy-runtime: attempting LibOVRRT64_1.dll beside the exe (threaded)");
+        std::thread::spawn(|| {
+            let rc = compat_initialize();
+            record(&format!("lazy-runtime: compat_initialize rc {rc}"));
+        });
+    }
 }
 
 pub fn compat_initialize() -> i32 {
@@ -212,12 +234,18 @@ pub fn compat_initialize() -> i32 {
         INITIALIZED.store(true, Ordering::Relaxed);
         return 0;
     }
+    let dll = "LibOVRRT64_1.dll";
+    if let Some(p) = runtime_dll_path() {
+        record(&format!("lazy-runtime: loading {}", p.to_string_lossy()));
+    } else {
+        record(&format!("lazy-runtime: loading {dll} (path unresolved, relying on search)"));
+    }
     let module = unsafe {
-        let name: Vec<u16> = "LibOVRRT64_1.dll\0".encode_utf16().collect();
+        let name: Vec<u16> = format!("{dll}\0").encode_utf16().collect();
         LoadLibraryW(name.as_ptr())
     };
     if module == 0 {
-        record("compat_initialize: LibOVRRT64_1.dll not found");
+        record("compat_initialize: LibOVRRT64_1.dll not found/load failed");
         return -1003; // ovrError_InvalidOperation: no runtime found
     }
     let raw_init = unsafe {

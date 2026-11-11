@@ -193,6 +193,12 @@ fn fake_init_enabled() -> bool {
 /// block inside ovr_Initialize while it tries to reach vrserver, and that
 /// must never hang Unity's GetInitialized poll loop. The poll keeps
 /// returning the current flag until a session actually gets created.
+fn sync_init_enabled() -> bool {
+    std::env::var("IRIS_OVR_SYNC_INIT")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+}
+
 fn lazy_runtime_once() {
     if LAZY_TRIED.swap(true, std::sync::atomic::Ordering::Relaxed) {
         return;
