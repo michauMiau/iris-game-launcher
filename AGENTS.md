@@ -72,6 +72,6 @@ Windows launches the game exe directly, no wine. The launcher places the same pl
 - Don't save Commit SHAs and package hashes into memory.
 - Build from `launcher/` only. Windows artifacts are built for `x86_64-pc-windows-gnu`; packages are single files (AppImage on Linux, one exe on Windows), no extra containers or side binaries.
 - Keep launches lightweight and truthful: log lines say what actually happened (manifest pointed at, vrserver started or not, swap landed or declined), never promises about live VR sessions.
-- Clean code is preferrable over a wall of comments. Comment what the code cannot show (why, traps, measured facts); do not narrate obvious steps.
+- Clean code is preferrable over a wall of comments. Understandable code beats comments; add them only when it is not obvious why something is done that way (traps, ABI quirks, measured facts), never to narrate obvious steps.
 - Tests live outside module files: grouped modules in `launcher/src/tests/` (launch, vr, stop, assets, settings, fetcher, auth, i18n), each `use crate::*`. No module file carries `#[test]`; whatever a test needs becomes `pub(crate)`.
 - First run (no config.json yet) matches the desktop: language from locale vars or Windows Locale registry, theme from GTK_THEME / GNOME color-scheme / KDE kdeglobals / Windows AppsUseLightTheme. Unknown system hints fall back to shipped defaults; a malformed existing config also falls back to defaults instead of re-detecting.
