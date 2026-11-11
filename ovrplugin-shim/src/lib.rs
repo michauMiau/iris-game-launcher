@@ -516,12 +516,12 @@ pub extern "C" fn ovrp_GetASWVelocityScale() -> i32 {
 
 #[no_mangle]
 pub extern "C" fn ovrp_GetActiveController() -> i32 {
-    1
+    crate::trace_call("ovrp_GetActiveController"); 1
 }
 
 #[no_mangle]
-pub extern "C" fn ovrp_GetActiveController2() -> i32 {
-    0
+pub extern "C" fn ovrp_GetActiveController2(a0: *mut i32) -> i32 {
+    crate::trace_call("ovrp_GetActiveController2"); unsafe { if !a0.is_null() { *a0 = 1; } } 0
 }
 
 #[no_mangle]
@@ -556,12 +556,12 @@ pub extern "C" fn ovrp_GetAppCPUPriority2() -> i32 {
 
 #[no_mangle]
 pub extern "C" fn ovrp_GetAppChromaticCorrection() -> i32 {
-   0
+    1
 }
 
 #[no_mangle]
 pub extern "C" fn ovrp_GetAppCpuStartToGpuEndTime() -> f32 {
-   0.0
+    crate::trace_call("ovrp_GetAppCpuStartToGpuEndTime"); 0.0f32
 }
 
 #[no_mangle]
@@ -571,7 +571,7 @@ pub extern "C" fn ovrp_GetAppCpuStartToGpuEndTime2() -> i32 {
 
 #[no_mangle]
 pub extern "C" fn ovrp_GetAppFramerate() -> f32 {
-    90.0
+    crate::trace_call("ovrp_GetAppFramerate"); 90.0f32
 }
 
 #[no_mangle]
@@ -611,7 +611,7 @@ pub extern "C" fn ovrp_GetAppLatencyTimings2() -> i32 {
 
 #[no_mangle]
 pub extern "C" fn ovrp_GetAppMonoscopic() -> i32 {
-   0
+    0
 }
 
 #[no_mangle]
@@ -635,8 +635,8 @@ pub extern "C" fn ovrp_GetAppShouldQuit() -> i32 {
 }
 
 #[no_mangle]
-pub extern "C" fn ovrp_GetAppShouldQuit2() -> i32 {
-    0
+pub extern "C" fn ovrp_GetAppShouldQuit2(a0: *mut i32) -> i32 {
+    crate::trace_call("ovrp_GetAppShouldQuit2"); unsafe { if !a0.is_null() { *a0 = 0; } } 0
 }
 
 #[no_mangle]
@@ -645,8 +645,8 @@ pub extern "C" fn ovrp_GetAppShouldRecenter() -> i32 {
 }
 
 #[no_mangle]
-pub extern "C" fn ovrp_GetAppShouldRecenter2() -> i32 {
-    0
+pub extern "C" fn ovrp_GetAppShouldRecenter2(a0: *mut i32) -> i32 {
+   0
 }
 
 #[no_mangle]
@@ -706,12 +706,12 @@ pub extern "C" fn ovrp_GetBatteryStatus() -> i32 {
 
 #[no_mangle]
 pub extern "C" fn ovrp_GetBoundaryConfigured() -> i32 {
-   0
+    crate::trace_call("ovrp_GetBoundaryConfigured"); 0
 }
 
 #[no_mangle]
-pub extern "C" fn ovrp_GetBoundaryConfigured2() -> i32 {
-    0
+pub extern "C" fn ovrp_GetBoundaryConfigured2(a0: *mut i32) -> i32 {
+    crate::trace_call("ovrp_GetBoundaryConfigured2"); unsafe { if !a0.is_null() { *a0 = 0; } } 0
 }
 
 #[no_mangle]
@@ -741,12 +741,12 @@ pub extern "C" fn ovrp_GetBoundaryGeometry3() -> i32 {
 
 #[no_mangle]
 pub extern "C" fn ovrp_GetBoundaryVisible() -> i32 {
-   0
+    crate::trace_call("ovrp_GetBoundaryVisible"); 0
 }
 
 #[no_mangle]
-pub extern "C" fn ovrp_GetBoundaryVisible2() -> i32 {
-    0
+pub extern "C" fn ovrp_GetBoundaryVisible2(a0: *mut i32) -> i32 {
+    crate::trace_call("ovrp_GetBoundaryVisible2"); unsafe { if !a0.is_null() { *a0 = 0; } } 0
 }
 
 #[no_mangle]
@@ -806,7 +806,7 @@ pub extern "C" fn ovrp_GetCaps2() -> i32 {
 
 #[no_mangle]
 pub extern "C" fn ovrp_GetConnectedControllers() -> i32 {
-   0
+    crate::trace_call("ovrp_GetConnectedControllers"); 3
 }
 
 #[no_mangle]
@@ -851,7 +851,7 @@ pub extern "C" fn ovrp_GetControllerState3() -> i32 {
 
 #[no_mangle]
 pub extern "C" fn ovrp_GetControllerState4(a0: u32, a1: *mut i32) -> i32 {
-   0
+    crate::trace_call("ovrp_GetControllerState4"); 0
 }
 
 #[no_mangle]
@@ -941,7 +941,7 @@ pub extern "C" fn ovrp_GetEyeOcclusionMesh() -> i32 {
 
 #[no_mangle]
 pub extern "C" fn ovrp_GetEyeOcclusionMeshEnabled() -> i32 {
-    1
+    0
 }
 
 #[no_mangle]
@@ -1020,8 +1020,8 @@ pub extern "C" fn ovrp_GetEyeViewportScale() -> i32 {
 }
 
 #[no_mangle]
-pub extern "C" fn ovrp_GetFloat() -> i32 {
-    0
+pub extern "C" fn ovrp_GetFloat(a0: i32) -> f32 {
+    crate::trace_call("ovrp_GetFloat"); 0.0f32
 }
 
 #[no_mangle]
@@ -1130,8 +1130,8 @@ pub extern "C" fn ovrp_GetNativeSDKPointer() -> i32 {
 }
 
 #[no_mangle]
-pub extern "C" fn ovrp_GetNativeSDKPointer2() -> i32 {
-    0
+pub extern "C" fn ovrp_GetNativeSDKPointer2(a0: *mut *mut std::os::raw::c_void) -> i32 {
+    unsafe { if !a0.is_null() { *a0 = std::ptr::null_mut(); } } 0
 }
 
 #[no_mangle]
@@ -1166,12 +1166,12 @@ pub extern "C" fn ovrp_GetNodeFrustum2(a0: i32, a1: *mut i32) -> i32 {
 
 #[no_mangle]
 pub extern "C" fn ovrp_GetNodeOrientationTracked(a0: i32) -> i32 {
-   0
+    crate::trace_call("ovrp_GetNodeOrientationTracked"); 1
 }
 
 #[no_mangle]
-pub extern "C" fn ovrp_GetNodeOrientationTracked2() -> i32 {
-    0
+pub extern "C" fn ovrp_GetNodeOrientationTracked2(a0: i32, a1: *mut i32) -> i32 {
+    crate::trace_call("ovrp_GetNodeOrientationTracked2"); unsafe { if !a1.is_null() { *a1 = 1; } } 0
 }
 
 #[no_mangle]
@@ -1211,12 +1211,12 @@ pub extern "C" fn ovrp_GetNodePoseStateRaw(_step: i32, _frame: i32, _node: i32, 
 
 #[no_mangle]
 pub extern "C" fn ovrp_GetNodePositionTracked(a0: i32) -> i32 {
-   0
+    crate::trace_call("ovrp_GetNodePositionTracked"); 1
 }
 
 #[no_mangle]
-pub extern "C" fn ovrp_GetNodePositionTracked2() -> i32 {
-    0
+pub extern "C" fn ovrp_GetNodePositionTracked2(a0: i32, a1: *mut i32) -> i32 {
+    crate::trace_call("ovrp_GetNodePositionTracked2"); unsafe { if !a1.is_null() { *a1 = 1; } } 0
 }
 
 #[no_mangle]
@@ -1230,8 +1230,8 @@ pub extern "C" fn ovrp_GetNodePresent(a0: i32) -> i32 {
 }
 
 #[no_mangle]
-pub extern "C" fn ovrp_GetNodePresent2() -> i32 {
-    0
+pub extern "C" fn ovrp_GetNodePresent2(a0: i32, a1: *mut i32) -> i32 {
+    crate::trace_call("ovrp_GetNodePresent2"); unsafe { if !a1.is_null() { *a1 = 1; } } 0
 }
 
 #[no_mangle]
@@ -1370,8 +1370,8 @@ pub extern "C" fn ovrp_GetSystemHeadsetType() -> i32 {
 }
 
 #[no_mangle]
-pub extern "C" fn ovrp_GetSystemHeadsetType2() -> i32 {
-    0
+pub extern "C" fn ovrp_GetSystemHeadsetType2(a0: *mut i32) -> i32 {
+    crate::trace_call("ovrp_GetSystemHeadsetType2"); unsafe { if !a0.is_null() { *a0 = 8; } } 0
 }
 
 #[no_mangle]
@@ -1380,8 +1380,8 @@ pub extern "C" fn ovrp_GetSystemMultiViewSupported() -> i32 {
 }
 
 #[no_mangle]
-pub extern "C" fn ovrp_GetSystemMultiViewSupported2() -> i32 {
-    0
+pub extern "C" fn ovrp_GetSystemMultiViewSupported2(a0: *mut i32) -> i32 {
+    crate::trace_call("ovrp_GetSystemMultiViewSupported2"); unsafe { if !a0.is_null() { *a0 = 0; } } 0
 }
 
 #[no_mangle]
@@ -1440,8 +1440,8 @@ pub extern "C" fn ovrp_GetSystemVolume() -> f32 {
 }
 
 #[no_mangle]
-pub extern "C" fn ovrp_GetSystemVolume2() -> i32 {
-    0
+pub extern "C" fn ovrp_GetSystemVolume2(a0: *mut f32) -> i32 {
+    crate::trace_call("ovrp_GetSystemVolume2"); unsafe { if !a0.is_null() { *a0 = 1.0; } } 0
 }
 
 #[no_mangle]
@@ -1456,7 +1456,7 @@ pub extern "C" fn ovrp_GetTiledMultiResSupported(a0: *mut i32) -> i32 {
 
 #[no_mangle]
 pub extern "C" fn ovrp_GetTimeInSeconds(a0: *mut f64) -> i32 {
-    unsafe { if !a0.is_null() { *a0 = crate::now_sec(); } } 0
+    crate::trace_call("ovrp_GetTimeInSeconds"); unsafe { if !a0.is_null() { *a0 = crate::now_sec(); } } 0
 }
 
 #[no_mangle]
@@ -1501,12 +1501,12 @@ pub extern "C" fn ovrp_GetTrackingOrientationEnabled2() -> i32 {
 
 #[no_mangle]
 pub extern "C" fn ovrp_GetTrackingOrientationSupported() -> i32 {
-   0
+    crate::trace_call("ovrp_GetTrackingOrientationSupported"); 1
 }
 
 #[no_mangle]
-pub extern "C" fn ovrp_GetTrackingOrientationSupported2() -> i32 {
-    0
+pub extern "C" fn ovrp_GetTrackingOrientationSupported2(a0: *mut i32) -> i32 {
+    crate::trace_call("ovrp_GetTrackingOrientationSupported2"); unsafe { if !a0.is_null() { *a0 = 1; } } 0
 }
 
 #[no_mangle]
@@ -1531,12 +1531,12 @@ pub extern "C" fn ovrp_GetTrackingPositionEnabled2() -> i32 {
 
 #[no_mangle]
 pub extern "C" fn ovrp_GetTrackingPositionSupported() -> i32 {
-   0
+    crate::trace_call("ovrp_GetTrackingPositionSupported"); 1
 }
 
 #[no_mangle]
-pub extern "C" fn ovrp_GetTrackingPositionSupported2() -> i32 {
-    0
+pub extern "C" fn ovrp_GetTrackingPositionSupported2(a0: *mut i32) -> i32 {
+    crate::trace_call("ovrp_GetTrackingPositionSupported2"); unsafe { if !a0.is_null() { *a0 = 1; } } 0
 }
 
 #[no_mangle]
@@ -2345,8 +2345,8 @@ pub extern "C" fn ovrp_TestBoundaryPoint2() -> i32 {
 }
 
 #[no_mangle]
-pub extern "C" fn ovrp_Update() -> i32 {
-    0
+pub extern "C" fn ovrp_Update(a0: i32) -> i32 {
+    crate::trace_call("ovrp_Update"); 1
 }
 
 #[no_mangle]
@@ -2355,8 +2355,8 @@ pub extern "C" fn ovrp_Update2(a0: i32, a1: i32, a2: f64) -> i32 {
 }
 
 #[no_mangle]
-pub extern "C" fn ovrp_Update3() -> i32 {
-    0
+pub extern "C" fn ovrp_Update3(a0: i32, a1: i32, a2: f64) -> i32 {
+    crate::trace_call("ovrp_Update3"); 0
 }
 
 #[no_mangle]
