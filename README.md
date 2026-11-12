@@ -35,7 +35,7 @@ No Claude or ChatGPT here.
 | Game    | Status |
 | :--------: | ------- |
 | BONELAB  | ✅ Leaderboards and achievements not implemented, Fusion broken |
-| BONEWORKS | ✅ Works (OVRPlugin shim, Proton + SteamVR) |
+| BONEWORKS | ⚠️ Launches (Proton + SteamVR), VR session not working yet (OVRPlugin/Revive path experimental) |
 | [See More](docs/game-compatibility.md) |
 
 ## License
