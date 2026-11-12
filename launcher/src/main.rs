@@ -7543,7 +7543,10 @@ fn main() -> eframe::Result {
         let mut opts = eframe::NativeOptions::default();
         // Default 800x600 crops the cover grid on wide screens; give the library
         // room to breathe from the first frame.
-        opts.viewport.inner_size = Some(egui::Vec2::new(1050.0, 720.0));
+        opts.viewport = opts
+            .viewport
+            .with_inner_size(egui::Vec2::new(1050.0, 720.0))
+            .with_app_id("iris-launcher");
         // eframe's fallback window/taskbar icon is the egui logo (white "e" on
         // black) — ship the real logo instead. winit drops the alpha when drawing
         // the Windows taskbar icon, so transparent pixels would land as a white
