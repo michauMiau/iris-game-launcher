@@ -12,7 +12,7 @@ static INITIALIZED: AtomicBool = AtomicBool::new(false);
 /// Build label emitted as the first trace line so logs self-identify which
 /// shim build produced them (assets/ovrplugin-shim.dll is rebuilt from this
 /// repo's sources; the label here is the source of truth, then git tag).
-pub const SHIM_BUILD_LABEL: &str = "ovrplugin-shim 0.1.26-abi";
+pub const SHIM_BUILD_LABEL: &str = "ovrplugin-shim 0.1.27-abi";
 
 /// Lazy bring-up: Unity's Oculus integration polls GetInitialized without
 /// ever calling Initialize on this plugin build (measured on Boneworks:
@@ -213,18 +213,42 @@ fn runtime_dll_path() -> Option<std::path::PathBuf> {
     })
 }
 
+fn runtime_bringup_enabled() -> bool {
+    std::env::var("IRIS_OVR_ENABLE_RUNTIME")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+}
+
+fn runtime_dll_candidates() -> Vec<String> {
+    if let Ok(v) = std::env::var("IRIS_OVR_RUNTIME_DLL") {
+        let v = v.trim().to_string();
+        if !v.is_empty() {
+            return vec![v];
+        }
+    }
+    let backend = std::env::var("IRIS_OVR_RUNTIME_BACKEND").unwrap_or_default();
+    match backend.to_ascii_lowercase().as_str() {
+        "xr" | "openxr" => vec!["LibReviveXR64.dll".into()],
+        "vr" | "openvr" => vec!["LibOVRRT64_1.dll".into()],
+        _ => vec!["LibReviveXR64.dll".into(), "LibOVRRT64_1.dll".into()],
+    }
+}
+
 fn lazy_runtime_once() {
     if LAZY_TRIED.swap(true, std::sync::atomic::Ordering::Relaxed) {
         return;
     }
+    if !runtime_bringup_enabled() {
+        record("lazy-runtime: skipped (set IRIS_OVR_ENABLE_RUNTIME=1 to attempt Revive/runtime bring-up)");
+        return;
+    }
     // Always run Revive/runtime bring-up off the caller thread: LoadLibrary and
     // ovr_Initialize/ovr_Create can block on vrclient/SteamVR and must not stall
-    // Unity's GetInitialized poll (seen hanging with IRIS_OVR_SYNC_INIT).
+    // Unity's GetInitialized poll.
     if sync_init_enabled() {
         record("lazy-runtime: IRIS_OVR_SYNC_INIT requested but forcing threaded init to avoid blocking the game thread");
-    } else {
-        record("lazy-runtime: attempting LibOVRRT64_1.dll beside the exe (threaded)");
     }
+    record(&format!("lazy-runtime: runtime bring-up enabled (backend={})", std::env::var("IRIS_OVR_RUNTIME_BACKEND").unwrap_or_else(|_| "auto".into())));
     std::thread::spawn(|| {
         let rc = compat_initialize();
         record(&format!("lazy-runtime: compat_initialize rc {rc}"));
@@ -236,56 +260,59 @@ pub fn compat_initialize() -> i32 {
         INITIALIZED.store(true, Ordering::Relaxed);
         return 0;
     }
-    let dll = "LibOVRRT64_1.dll";
-    if let Some(p) = runtime_dll_path() {
-        record(&format!("lazy-runtime: loading {}", p.to_string_lossy()));
-    } else {
-        record(&format!("lazy-runtime: loading {dll} (path unresolved, relying on search)"));
+    let mut last_rc = -1003;
+    for dll in runtime_dll_candidates() {
+        record(&format!("lazy-runtime: loading {dll}"));
+        let module = unsafe {
+            let name: Vec<u16> = format!("{dll}\0").encode_utf16().collect();
+            LoadLibraryW(name.as_ptr())
+        };
+        if module == 0 {
+            let err = unsafe { GetLastError() };
+            record(&format!("compat_initialize: {dll} not found/load failed (GetLastError={err})"));
+            last_rc = -1003;
+            continue;
+        }
+        record(&format!("compat_initialize: module loaded {dll} {module:#x}"));
+        let raw_init = unsafe {
+            GetProcAddress(module, b"ovr_Initialize\0".as_ptr() as *const c_char)
+        };
+        let raw_create = unsafe {
+            GetProcAddress(module, b"ovr_Create\0".as_ptr() as *const c_char)
+        };
+        if raw_init.is_null() || raw_create.is_null() {
+            let err = unsafe { GetLastError() };
+            record(&format!("compat_initialize: {dll} missing ovr_Initialize or ovr_Create (GetLastError={err})"));
+            unsafe { let _ = FreeLibrary(module); }
+            last_rc = -1003;
+            continue;
+        }
+        let ovr_initialize: FnOvrInitialize = unsafe { std::mem::transmute(raw_init) };
+        let ovr_create: FnOvrCreate = unsafe { std::mem::transmute(raw_create) };
+        record(&format!("compat_initialize: calling ovr_Initialize ({dll})"));
+        let init_rc = unsafe { ovr_initialize(std::ptr::null()) };
+        record(&format!("compat_initialize: ovr_Initialize rc {init_rc} ({dll})"));
+        if init_rc != 0 {
+            unsafe { let _ = FreeLibrary(module); }
+            last_rc = -1003;
+            continue;
+        }
+        let mut session: *mut c_void = std::ptr::null_mut();
+        let mut hmd: *mut c_void = std::ptr::null_mut();
+        record(&format!("compat_initialize: calling ovr_Create ({dll})"));
+        let create_rc = unsafe { ovr_create(&mut session, &mut hmd) };
+        record(&format!("compat_initialize: ovr_Create rc {create_rc} session_is_null={} ({dll})", session.is_null()));
+        if create_rc != 0 || session.is_null() {
+            unsafe { let _ = FreeLibrary(module); }
+            last_rc = -1000;
+            continue;
+        }
+        record(&format!("compat_initialize: session created ({dll})"));
+        let _ = RUNTIME.set(Runtime { _module: module, session });
+        INITIALIZED.store(true, Ordering::Relaxed);
+        return 0;
     }
-    let module = unsafe {
-        let name: Vec<u16> = format!("{dll}\0").encode_utf16().collect();
-        LoadLibraryW(name.as_ptr())
-    };
-    if module == 0 {
-        let err = unsafe { GetLastError() };
-        record(&format!("compat_initialize: LibOVRRT64_1.dll not found/load failed (GetLastError={err})"));
-        return -1003; // ovrError_InvalidOperation: no runtime found
-    }
-    record(&format!("compat_initialize: module loaded {module:#x}"));
-    let raw_init = unsafe {
-        GetProcAddress(module, b"ovr_Initialize\0".as_ptr() as *const c_char)
-    };
-    let raw_create = unsafe {
-        GetProcAddress(module, b"ovr_Create\0".as_ptr() as *const c_char)
-    };
-    if raw_init.is_null() || raw_create.is_null() {
-        let err = unsafe { GetLastError() };
-        record(&format!("compat_initialize: missing ovr_Initialize or ovr_Create (GetLastError={err})"));
-        unsafe { let _ = FreeLibrary(module); }
-        return -1003;
-    }
-    let ovr_initialize: FnOvrInitialize = unsafe { std::mem::transmute(raw_init) };
-    let ovr_create: FnOvrCreate = unsafe { std::mem::transmute(raw_create) };
-    record("compat_initialize: calling ovr_Initialize");
-    let init_rc = unsafe { ovr_initialize(std::ptr::null()) };
-    record(&format!("compat_initialize: ovr_Initialize rc {init_rc}"));
-    if init_rc != 0 {
-        unsafe { let _ = FreeLibrary(module); }
-        return -1003;
-    }
-    let mut session: *mut c_void = std::ptr::null_mut();
-    let mut hmd: *mut c_void = std::ptr::null_mut();
-    record("compat_initialize: calling ovr_Create");
-    let create_rc = unsafe { ovr_create(&mut session, &mut hmd) };
-    record(&format!("compat_initialize: ovr_Create rc {create_rc} session_is_null={}", session.is_null()));
-    if create_rc != 0 || session.is_null() {
-        unsafe { let _ = FreeLibrary(module); }
-        return -1000;
-    }
-    record("compat_initialize: session created");
-    let _ = RUNTIME.set(Runtime { _module: module, session });
-    INITIALIZED.store(true, Ordering::Relaxed);
-    0
+    last_rc
 }
 
 // ---- init-path stubs with real descriptors ----
@@ -409,7 +436,7 @@ pub extern "C" fn ovrp_AutoThreadScheduling() -> i32 {
 
 #[no_mangle]
 pub extern "C" fn ovrp_BeginFrame(a0: i32) -> i32 {
-    crate::trace_call("ovrp_BeginFrame"); 1
+    crate::trace_call("ovrp_BeginFrame"); 0
 }
 
 #[no_mangle]
@@ -533,7 +560,7 @@ pub extern "C" fn ovrp_EndEye2() -> i32 {
 
 #[no_mangle]
 pub extern "C" fn ovrp_EndFrame(a0: i32) -> i32 {
-    crate::trace_call("ovrp_EndFrame"); 1
+    crate::trace_call("ovrp_EndFrame"); 0
 }
 
 #[no_mangle]
@@ -1107,9 +1134,34 @@ pub extern "C" fn ovrp_GetEyeFrustum() -> i32 {
     0
 }
 
+
 #[no_mangle]
 pub extern "C" fn ovrp_GetEyeOcclusionMesh() -> i32 {
     crate::trace_call("ovrp_GetEyeOcclusionMesh");
+    0
+}
+
+
+#[no_mangle]
+pub extern "C" fn ovrp_CalcEyePoses(_a0: i64, _a1: i64, _a2: i64, _out: *mut u8) -> i32 {
+    crate::trace_call("ovrp_CalcEyePoses");
+    if !_out.is_null() { unsafe { std::ptr::write_bytes(_out, 0, 256); let f = _out as *mut f32; f.add(3).write(1.0); f.add(11).write(1.0); } }
+    0
+}
+
+
+#[no_mangle]
+pub extern "C" fn ovrp_GetEyePoses(_a0: i64, _a1: i64, _a2: i64, _out: *mut u8) -> i32 {
+    crate::trace_call("ovrp_GetEyePoses");
+    if !_out.is_null() { unsafe { std::ptr::write_bytes(_out, 0, 256); let f = _out as *mut f32; f.add(3).write(1.0); f.add(11).write(1.0); } }
+    0
+}
+
+
+#[no_mangle]
+pub extern "C" fn ovrp_GetEyePoses2(_a0: i64, _a1: i64, _a2: i64, _out: *mut u8) -> i32 {
+    crate::trace_call("ovrp_GetEyePoses2");
+    if !_out.is_null() { unsafe { std::ptr::write_bytes(_out, 0, 256); let f = _out as *mut f32; f.add(3).write(1.0); f.add(11).write(1.0); } }
     0
 }
 
@@ -1182,6 +1234,14 @@ pub extern "C" fn ovrp_GetEyeTextureShared() -> i32 {
     0
 }
 
+
+#[no_mangle]
+pub extern "C" fn ovrp_GetEyeRenderDesc(_eye: i32, out: *mut u8) -> i32 {
+    crate::trace_call("ovrp_GetEyeRenderDesc");
+    if !out.is_null() { unsafe { std::ptr::write_bytes(out, 0, 64); } }
+    0
+}
+
 #[no_mangle]
 pub extern "C" fn ovrp_GetEyeTextureSize(_eye: i32) -> i64 {
     crate::trace_call("ovrp_GetEyeTextureSize"); if crate::initialized() { (2048i64 | (2048i64 << 32)) } else { 0i64 }
@@ -1221,6 +1281,14 @@ pub extern "C" fn ovrp_GetGPUUtilLevel(a0: *mut f32) -> i32 {
    0
 }
 
+
+#[no_mangle]
+pub extern "C" fn ovrp_GetFovTextureSize(_eye: i32, _fov: i64, _pixels_per_display_pixel: f32) -> i64 {
+    crate::trace_call("ovrp_GetFovTextureSize");
+    // packed size (w | (h<<32)) - common in some plugin builds; conservative
+    1512i64 | (1680i64 << 32)
+}
+
 #[no_mangle]
 pub extern "C" fn ovrp_GetGPUUtilSupported(a0: *mut i32) -> i32 {
     crate::trace_call("ovrp_GetGPUUtilSupported");
@@ -1254,6 +1322,24 @@ pub extern "C" fn ovrp_GetHmdToEyeOffset() -> i32 {
 #[no_mangle]
 pub extern "C" fn ovrp_GetHmdToEyeOffset2() -> i32 {
     0
+}
+
+
+#[no_mangle]
+pub extern "C" fn ovrp_GetHmdDesc(out: *mut u8) -> *mut u8 {
+    crate::trace_call("ovrp_GetHmdDesc");
+    if !out.is_null() {
+        unsafe {
+            std::ptr::write_bytes(out, 0, 128);
+            // best-effort: fill some fields if interpreted as struct; many ABIs vary.
+            let f = out as *mut f32;
+            let i = out as *mut i32;
+            // resolution/texture hints
+            *i.offset(0) = 1832;
+            *i.offset(1) = 1920;
+        }
+    }
+    out
 }
 
 #[no_mangle]
@@ -1399,22 +1485,70 @@ pub extern "C" fn ovrp_GetNodePose2(ret: *mut u8, _state: i32, _node: i32) -> *m
 
 #[no_mangle]
 pub extern "C" fn ovrp_GetNodePoseState(ret: *mut u8, _step: i32, _node: i32) -> *mut u8 {
-    crate::trace_call("ovrp_GetNodePoseState"); unsafe { if !ret.is_null() { std::ptr::write_bytes(ret, 0, 88); let p = ret as *mut f32; p.add(3).write(1.0); } } ret
+    crate::trace_call("ovrp_GetNodePoseState");
+    unsafe {
+        if !ret.is_null() {
+            std::ptr::write_bytes(ret, 0, 96);
+            let p = ret as *mut f32;
+            // Posef orientation quat w at common offsets
+            p.add(3).write(1.0);
+            p.add(7).write(1.0);
+            // position y
+            p.add(5).write(1.6);
+            // TimeInSeconds / valid flags best-effort
+            let d = ret as *mut f64;
+            *d = crate::now_sec();
+        }
+    }
+    ret
 }
 
 #[no_mangle]
 pub extern "C" fn ovrp_GetNodePoseState2(_step: i32, _frame: i32, _node: i32, out: *mut u8) -> i32 {
-    crate::trace_call("ovrp_GetNodePoseState2"); if out.is_null() { return -1001i32; } unsafe { std::ptr::write_bytes(out, 0, 88); let p = out as *mut f32; p.add(3).write(1.0); } 0
+    crate::trace_call("ovrp_GetNodePoseState2");
+    if out.is_null() { return -1001i32; }
+    unsafe {
+        std::ptr::write_bytes(out, 0, 96);
+        let p = out as *mut f32;
+        p.add(3).write(1.0);
+        p.add(7).write(1.0);
+        p.add(5).write(1.6);
+        let d = out as *mut f64;
+        *d = crate::now_sec();
+    }
+    0
 }
 
 #[no_mangle]
 pub extern "C" fn ovrp_GetNodePoseState3(_step: i32, _frame: i32, _node: i32, out: *mut u8) -> i32 {
-    crate::trace_call("ovrp_GetNodePoseState3"); if out.is_null() { return -1001i32; } unsafe { std::ptr::write_bytes(out, 0, 88); let p = out as *mut f32; p.add(3).write(1.0); } 0
+    crate::trace_call("ovrp_GetNodePoseState3");
+    if out.is_null() { return -1001i32; }
+    unsafe {
+        std::ptr::write_bytes(out, 0, 96);
+        let p = out as *mut f32;
+        p.add(3).write(1.0);
+        p.add(7).write(1.0);
+        p.add(5).write(1.6);
+        let d = out as *mut f64;
+        *d = crate::now_sec();
+    }
+    0
 }
 
 #[no_mangle]
 pub extern "C" fn ovrp_GetNodePoseStateRaw(_step: i32, _frame: i32, _node: i32, out: *mut u8) -> i32 {
-    crate::trace_call("ovrp_GetNodePoseStateRaw"); if out.is_null() { return -1001i32; } unsafe { std::ptr::write_bytes(out, 0, 88); let p = out as *mut f32; p.add(3).write(1.0); } 0
+    crate::trace_call("ovrp_GetNodePoseStateRaw");
+    if out.is_null() { return -1001i32; }
+    unsafe {
+        std::ptr::write_bytes(out, 0, 96);
+        let p = out as *mut f32;
+        p.add(3).write(1.0);
+        p.add(7).write(1.0);
+        p.add(5).write(1.6);
+        let d = out as *mut f64;
+        *d = crate::now_sec();
+    }
+    0
 }
 
 #[no_mangle]
@@ -1484,15 +1618,46 @@ pub extern "C" fn ovrp_GetPredictedDisplayTime() -> i32 {
     0
 }
 
+
+
+#[no_mangle]
+pub extern "C" fn ovrp_GetRenderDesc(_eye: i32, _fov: i64) -> i64 {
+    crate::trace_call("ovrp_GetRenderDesc");
+    0
+}
+
+#[no_mangle]
+pub extern "C" fn ovrp_GetRenderDesc2(_eye: i32, _fov: i64) -> i64 {
+    crate::trace_call("ovrp_GetRenderDesc2");
+    0
+}
+
 #[no_mangle]
 pub extern "C" fn ovrp_GetReorientHMDOnControllerRecenter(a0: *mut i32) -> i32 {
     crate::trace_call("ovrp_GetReorientHMDOnControllerRecenter");
    0
 }
 
+
 #[no_mangle]
 pub extern "C" fn ovrp_GetStatus() -> i32 {
     crate::trace_call("ovrp_GetStatus");
+    0
+}
+
+
+#[no_mangle]
+pub extern "C" fn ovrp_GetSessionStatus(out: *mut u8) -> i32 {
+    crate::trace_call("ovrp_GetSessionStatus");
+    if !out.is_null() { unsafe { std::ptr::write_bytes(out, 0, 32); /* IsVisible/HmdPresent/HmdMounted best-effort */ let p = out as *mut i32; *p = 1; *p.add(1) = 1; *p.add(2) = 1; } }
+    0
+}
+
+
+#[no_mangle]
+pub extern "C" fn ovrp_GetSessionStatus2(out: *mut u8) -> i32 {
+    crate::trace_call("ovrp_GetSessionStatus2");
+    if !out.is_null() { unsafe { std::ptr::write_bytes(out, 0, 32); /* IsVisible/HmdPresent/HmdMounted best-effort */ let p = out as *mut i32; *p = 1; *p.add(1) = 1; *p.add(2) = 1; } }
     0
 }
 
@@ -1795,6 +1960,38 @@ pub extern "C" fn ovrp_GetTrackingPositionSupported2(a0: *mut i32) -> i32 {
 pub extern "C" fn ovrp_GetTrackingTransformRawPose(a0: *mut i64) -> i32 {
     crate::trace_call("ovrp_GetTrackingTransformRawPose");
    0
+}
+
+
+
+#[no_mangle]
+pub extern "C" fn ovrp_GetTrackingState2(_abs_time: f64, out: *mut u8) -> i32 {
+    crate::trace_call("ovrp_GetTrackingState2");
+    if !out.is_null() {
+        unsafe {
+            std::ptr::write_bytes(out, 0, 256);
+            let f = out as *mut f32;
+            f.add(3).write(1.0);
+            f.add(7).write(1.0);
+            f.add(5).write(1.6);
+        }
+    }
+    0
+}
+
+#[no_mangle]
+pub extern "C" fn ovrp_GetTrackingState(_abs_time: f64, _latency_marker: i32, out: *mut u8) -> i32 {
+    crate::trace_call("ovrp_GetTrackingState");
+    if !out.is_null() {
+        unsafe {
+            std::ptr::write_bytes(out, 0, 256);
+            // HeadPose.ThePose.Orientation (quat w at +3 floats into pose start) best-effort
+            let f = out as *mut f32;
+            // common layout: HeadPose.Pose.Orientation.x/y/z/w around offset 4 floats
+            f.add(3).write(1.0);
+        }
+    }
+    0
 }
 
 #[no_mangle]
@@ -2767,7 +2964,7 @@ pub extern "C" fn ovrp_Update(a0: i32) -> i32 {
 
 #[no_mangle]
 pub extern "C" fn ovrp_Update2(a0: i32, a1: i32, a2: f64) -> i32 {
-    crate::trace_call("ovrp_Update2"); 1
+    crate::trace_call("ovrp_Update2"); 0
 }
 
 #[no_mangle]

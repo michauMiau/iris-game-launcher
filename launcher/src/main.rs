@@ -5832,12 +5832,22 @@ impl App {
         if !g.branches.is_empty() {
             ui.horizontal_wrapped(|ui| {
                 ui.label(tr(&self.config, "channel_label"));
-                for (i, b) in g.branches.iter().enumerate() {
-                    let label = format!("{} {}", b.name, b.version);
-                    if ui.radio(i == self.selected_branch, &label).clicked() {
-                        self.selected_branch = i;
-                    }
+                if self.selected_branch >= g.branches.len() {
+                    self.selected_branch = 0;
                 }
+                let selected_text = g
+                    .branches
+                    .get(self.selected_branch)
+                    .map(|b| format!("{} {}", b.name, b.version))
+                    .unwrap_or_default();
+                egui::ComboBox::from_id_salt(("release_channel", idx))
+                    .selected_text(selected_text)
+                    .show_ui(ui, |ui| {
+                        for (i, b) in g.branches.iter().enumerate() {
+                            let label = format!("{} {}", b.name, b.version);
+                            ui.selectable_value(&mut self.selected_branch, i, label);
+                        }
+                    });
             });
         }
         #[cfg(target_os = "linux")]
@@ -6750,6 +6760,10 @@ impl eframe::App for App {
                     // without a session so Unity stops polling and reveals
                     // its follow-up plugin calls in the trace.
                     ("Fake plugin init", Preset::Env("IRIS_OVR_FAKE_INIT")),
+                    (
+                        "OVR runtime bridge (experimental)",
+                        Preset::Env("IRIS_OVR_ENABLE_RUNTIME"),
+                    ),
                 ];
                 #[cfg(not(target_os = "windows"))]
                 // Proton's OpenVR/OpenXR bridge needs the native runtime

@@ -9,7 +9,7 @@ static INITIALIZED: AtomicBool = AtomicBool::new(false);
 /// Build label emitted as the first trace line so logs self-identify which
 /// shim build produced them (assets/ovrplugin-shim.dll is rebuilt from this
 /// repo's sources; the label here is the source of truth, then git tag).
-pub const SHIM_BUILD_LABEL: &str = "ovrplugin-shim 0.1.26-abi";
+pub const SHIM_BUILD_LABEL: &str = "ovrplugin-shim 0.1.27-abi";
 
 /// Lazy bring-up: Unity's Oculus integration polls GetInitialized without
 /// ever calling Initialize on this plugin build (measured on Boneworks:
@@ -200,18 +200,42 @@ fn sync_init_enabled() -> bool {
         .unwrap_or(false)
 }
 
+fn runtime_bringup_enabled() -> bool {
+    std::env::var("IRIS_OVR_ENABLE_RUNTIME")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+}
+
+fn runtime_dll_candidates() -> Vec<String> {
+    if let Ok(v) = std::env::var("IRIS_OVR_RUNTIME_DLL") {
+        let v = v.trim().to_string();
+        if !v.is_empty() {
+            return vec![v];
+        }
+    }
+    let backend = std::env::var("IRIS_OVR_RUNTIME_BACKEND").unwrap_or_default();
+    match backend.to_ascii_lowercase().as_str() {
+        "xr" | "openxr" => vec!["LibReviveXR64.dll".into()],
+        "vr" | "openvr" => vec!["LibOVRRT64_1.dll".into()],
+        _ => vec!["LibReviveXR64.dll".into(), "LibOVRRT64_1.dll".into()],
+    }
+}
+
 fn lazy_runtime_once() {
     if LAZY_TRIED.swap(true, std::sync::atomic::Ordering::Relaxed) {
         return;
     }
+    if !runtime_bringup_enabled() {
+        record("lazy-runtime: skipped (set IRIS_OVR_ENABLE_RUNTIME=1 to attempt Revive/runtime bring-up)");
+        return;
+    }
     // Always run Revive/runtime bring-up off the caller thread: LoadLibrary and
     // ovr_Initialize/ovr_Create can block on vrclient/SteamVR and must not stall
-    // Unity's GetInitialized poll (seen hanging with IRIS_OVR_SYNC_INIT).
+    // Unity's GetInitialized poll.
     if sync_init_enabled() {
         record("lazy-runtime: IRIS_OVR_SYNC_INIT requested but forcing threaded init to avoid blocking the game thread");
-    } else {
-        record("lazy-runtime: attempting LibOVRRT64_1.dll beside the exe (threaded)");
     }
+    record(&format!("lazy-runtime: runtime bring-up enabled (backend={})", std::env::var("IRIS_OVR_RUNTIME_BACKEND").unwrap_or_else(|_| "auto".into())));
     std::thread::spawn(|| {
         let rc = compat_initialize();
         record(&format!("lazy-runtime: compat_initialize rc {rc}"));
@@ -223,52 +247,59 @@ pub fn compat_initialize() -> i32 {
         INITIALIZED.store(true, Ordering::Relaxed);
         return 0;
     }
-    let dll = "LibOVRRT64_1.dll";
-    record(&format!("lazy-runtime: loading {dll}"));
-    let module = unsafe {
-        let name: Vec<u16> = format!("{dll}\0").encode_utf16().collect();
-        LoadLibraryW(name.as_ptr())
-    };
-    if module == 0 {
-        let err = unsafe { GetLastError() };
-        record(&format!("compat_initialize: LibOVRRT64_1.dll not found/load failed (GetLastError={err})"));
-        return -1003; // ovrError_InvalidOperation: no runtime found
+    let mut last_rc = -1003;
+    for dll in runtime_dll_candidates() {
+        record(&format!("lazy-runtime: loading {dll}"));
+        let module = unsafe {
+            let name: Vec<u16> = format!("{dll}\0").encode_utf16().collect();
+            LoadLibraryW(name.as_ptr())
+        };
+        if module == 0 {
+            let err = unsafe { GetLastError() };
+            record(&format!("compat_initialize: {dll} not found/load failed (GetLastError={err})"));
+            last_rc = -1003;
+            continue;
+        }
+        record(&format!("compat_initialize: module loaded {dll} {module:#x}"));
+        let raw_init = unsafe {
+            GetProcAddress(module, b"ovr_Initialize\0".as_ptr() as *const c_char)
+        };
+        let raw_create = unsafe {
+            GetProcAddress(module, b"ovr_Create\0".as_ptr() as *const c_char)
+        };
+        if raw_init.is_null() || raw_create.is_null() {
+            let err = unsafe { GetLastError() };
+            record(&format!("compat_initialize: {dll} missing ovr_Initialize or ovr_Create (GetLastError={err})"));
+            unsafe { let _ = FreeLibrary(module); }
+            last_rc = -1003;
+            continue;
+        }
+        let ovr_initialize: FnOvrInitialize = unsafe { std::mem::transmute(raw_init) };
+        let ovr_create: FnOvrCreate = unsafe { std::mem::transmute(raw_create) };
+        record(&format!("compat_initialize: calling ovr_Initialize ({dll})"));
+        let init_rc = unsafe { ovr_initialize(std::ptr::null()) };
+        record(&format!("compat_initialize: ovr_Initialize rc {init_rc} ({dll})"));
+        if init_rc != 0 {
+            unsafe { let _ = FreeLibrary(module); }
+            last_rc = -1003;
+            continue;
+        }
+        let mut session: *mut c_void = std::ptr::null_mut();
+        let mut hmd: *mut c_void = std::ptr::null_mut();
+        record(&format!("compat_initialize: calling ovr_Create ({dll})"));
+        let create_rc = unsafe { ovr_create(&mut session, &mut hmd) };
+        record(&format!("compat_initialize: ovr_Create rc {create_rc} session_is_null={} ({dll})", session.is_null()));
+        if create_rc != 0 || session.is_null() {
+            unsafe { let _ = FreeLibrary(module); }
+            last_rc = -1000;
+            continue;
+        }
+        record(&format!("compat_initialize: session created ({dll})"));
+        let _ = RUNTIME.set(Runtime { _module: module, session });
+        INITIALIZED.store(true, Ordering::Relaxed);
+        return 0;
     }
-    record(&format!("compat_initialize: module loaded {module:#x}"));
-    let raw_init = unsafe {
-        GetProcAddress(module, b"ovr_Initialize\0".as_ptr() as *const c_char)
-    };
-    let raw_create = unsafe {
-        GetProcAddress(module, b"ovr_Create\0".as_ptr() as *const c_char)
-    };
-    if raw_init.is_null() || raw_create.is_null() {
-        let err = unsafe { GetLastError() };
-        record(&format!("compat_initialize: missing ovr_Initialize or ovr_Create (GetLastError={err})"));
-        unsafe { let _ = FreeLibrary(module); }
-        return -1003;
-    }
-    let ovr_initialize: FnOvrInitialize = unsafe { std::mem::transmute(raw_init) };
-    let ovr_create: FnOvrCreate = unsafe { std::mem::transmute(raw_create) };
-    record("compat_initialize: calling ovr_Initialize");
-    let init_rc = unsafe { ovr_initialize(std::ptr::null()) };
-    record(&format!("compat_initialize: ovr_Initialize rc {init_rc}"));
-    if init_rc != 0 {
-        unsafe { let _ = FreeLibrary(module); }
-        return -1003;
-    }
-    let mut session: *mut c_void = std::ptr::null_mut();
-    let mut hmd: *mut c_void = std::ptr::null_mut();
-    record("compat_initialize: calling ovr_Create");
-    let create_rc = unsafe { ovr_create(&mut session, &mut hmd) };
-    record(&format!("compat_initialize: ovr_Create rc {create_rc} session_is_null={}", session.is_null()));
-    if create_rc != 0 || session.is_null() {
-        unsafe { let _ = FreeLibrary(module); }
-        return -1000;
-    }
-    record("compat_initialize: session created");
-    let _ = RUNTIME.set(Runtime { _module: module, session });
-    INITIALIZED.store(true, Ordering::Relaxed);
-    0
+    last_rc
 }
 
 // ---- init-path stubs with real descriptors ----
