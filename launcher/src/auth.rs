@@ -1,3 +1,4 @@
+use crate::i18n;
 pub(crate) use sha2::{Digest, Sha256};
 use std::io::Read;
 use std::process::Command;
@@ -417,9 +418,10 @@ pub fn handler_owner() -> &'static str {
     }
 }
 
-/// Human-readable handler state: what oculus:// currently points at, if anything.
+/// Human-readable handler state: what the login link currently points at.
+/// User-visible text comes from the i18n tables; the scheme name stays in code.
 #[cfg(target_os = "linux")]
-pub fn handler_status() -> String {
+pub fn handler_status(lang: &str) -> String {
     let dir = std::env::var("XDG_DATA_HOME")
         .unwrap_or_else(|_| format!("{}/.local/share", std::env::var("HOME").unwrap_or_default()));
     let entry = std::path::Path::new(&dir)
@@ -432,14 +434,17 @@ pub fn handler_status() -> String {
                 .find(|l| l.starts_with("Exec="))
                 .map(|l| l["Exec=".len()..].trim())
                 .unwrap_or("?");
-            format!("set, oculus:// -> {exec}")
+            i18n::fill(
+                i18n::text(i18n::parse(lang), "handler_status_linux_set").as_str(),
+                &[("exec", exec)],
+            )
         }
-        Err(_) => "not set — the browser login link goes nowhere".into(),
+        Err(_) => i18n::text(i18n::parse(lang), "handler_status_linux_none"),
     }
 }
 
 #[cfg(target_os = "linux")]
-pub fn uninstall_oculus_handler() -> Result<String, String> {
+pub fn uninstall_oculus_handler(lang: &str) -> Result<String, String> {
     let dir = std::env::var("XDG_DATA_HOME")
         .unwrap_or_else(|_| format!("{}/.local/share", std::env::var("HOME").unwrap_or_default()));
     let apps_dir = std::path::Path::new(&dir).join("applications");
@@ -454,14 +459,17 @@ pub fn uninstall_oculus_handler() -> Result<String, String> {
     let _ = Command::new("update-desktop-database")
         .arg(&apps_dir)
         .spawn();
-    Ok("oculus:// handed back to the system default".into())
+    Ok(i18n::text(
+        i18n::parse(lang),
+        "handler_back_linux",
+    ))
 }
 
 /// Register this launcher as the handler for oculus:// callback URLs.
 /// For AppImage runs `APPIMAGE` holds the real file path; the temporary
 /// /tmp/.mount_* dir dies when the AppImage exits, so never point at it.
 #[cfg(target_os = "linux")]
-pub fn install_oculus_handler() -> Result<String, String> {
+pub fn install_oculus_handler(lang: &str) -> Result<String, String> {
     let exec = match std::env::var("APPIMAGE") {
         Ok(p) => std::path::PathBuf::from(p),
         Err(_) => std::env::current_exe().map_err(|e| format!("cannot resolve own exe: {e}"))?,
@@ -484,7 +492,10 @@ pub fn install_oculus_handler() -> Result<String, String> {
     let _ = Command::new("update-desktop-database")
         .arg(&apps_dir)
         .spawn();
-    Ok(format!("{} -> {}", entry.display(), exec.display()))
+    Ok(i18n::text(
+        i18n::parse(lang),
+        "handler_set_ok",
+    ))
 }
 
 /// Windows: register oculus:// under HKCU\Software\Classes, which the shell
@@ -492,7 +503,7 @@ pub fn install_oculus_handler() -> Result<String, String> {
 /// The vendor's own handler stays untouched under HKLM; deleting the HKCU key
 /// gives control back to the vendor client process.
 #[cfg(target_os = "windows")]
-pub fn install_oculus_handler() -> Result<String, String> {
+pub fn install_oculus_handler(lang: &str) -> Result<String, String> {
     let exe = std::env::current_exe().map_err(|e| format!("cannot resolve own exe: {e}"))?;
     let cmd = format!("\"{}\" --url \"%1\"", exe.display());
     quiet(Command::new("reg"))
@@ -523,7 +534,10 @@ pub fn install_oculus_handler() -> Result<String, String> {
             String::from_utf8_lossy(&out.stderr)
         ));
     }
-    Ok(format!("HKCU\\Software\\Classes\\oculus -> {cmd}"))
+    Ok(i18n::text(
+        i18n::parse(lang),
+        "handler_set_ok",
+    ))
 }
 
 #[cfg(target_os = "windows")]
@@ -558,7 +572,7 @@ pub fn handler_owner() -> &'static str {
 
 /// Human-readable handler state on Windows.
 #[cfg(target_os = "windows")]
-pub fn handler_status() -> String {
+pub fn handler_status(lang: &str) -> String {
     let out = quiet(Command::new("reg"))
         .args([
             "query",
@@ -587,17 +601,24 @@ pub fn handler_status() -> String {
             // running exe; a leftover key pointing at another copy used to
             // claim ownership anyway.
             if cmd_low.contains(&exe) {
-                format!("set to this launcher, oculus:// -> {cmd}")
+                i18n::fill(
+                    i18n::text(i18n::parse(lang), "handler_status_win_set").as_str(),
+                    &[("cmd", &cmd)],
+                )
             } else {
-                format!("set, but to a different program: {cmd}")
+                i18n::fill(
+                    i18n::text(i18n::parse(lang), "handler_status_win_other")
+                        .as_str(),
+                    &[("cmd", &cmd)],
+                )
             }
         }
-        _ => "not set here, oculus:// goes to the official Link app, not this launcher".into(),
+        _ => i18n::text(i18n::parse(lang), "handler_status_win_none"),
     }
 }
 
 #[cfg(target_os = "windows")]
-pub fn uninstall_oculus_handler() -> Result<String, String> {
+pub fn uninstall_oculus_handler(lang: &str) -> Result<String, String> {
     let out = quiet(Command::new("reg"))
         .args(["delete", "HKCU\\Software\\Classes\\oculus", "/f"])
         .output()
@@ -608,7 +629,10 @@ pub fn uninstall_oculus_handler() -> Result<String, String> {
             String::from_utf8_lossy(&out.stderr)
         ));
     }
-    Ok("oculus:// handed back to the official Link app".into())
+    Ok(i18n::text(
+        i18n::parse(lang),
+        "handler_back_win",
+    ))
 }
 
 pub fn open_browser(url: &str) -> Result<(), String> {

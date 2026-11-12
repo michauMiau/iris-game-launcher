@@ -6304,11 +6304,15 @@ impl eframe::App for App {
                                     tr(&self.config, "handler_set")
                                 };
                                 if owner != "launcher" && ui.button(label).clicked() {
-                                    match auth::install_oculus_handler() {
-                                        Ok(p) => self.status = format!("headset link handler: {p}"),
-                                        Err(e) => {
-                                            self.status = format!("handler install failed: {e}")
-                                        }
+                                    match auth::install_oculus_handler(&self.config.lang) {
+                                        Ok(p) => self.status = i18n::fill(
+                                            tr(&self.config, "login_link_handler").as_str(),
+                                            &[("status", &p)],
+                                        ),
+                                        Err(e) => self.status = i18n::fill(
+                                            tr(&self.config, "handler_install_failed").as_str(),
+                                            &[("msg", &e)],
+                                        ),
                                     }
                                 }
                             }
@@ -6321,22 +6325,29 @@ impl eframe::App for App {
                                     tr(&self.config, "handler_take")
                                 };
                                 if ui.button(label).clicked() {
-                                    let res = if owner == "launcher" {
-                                        auth::uninstall_oculus_handler()
+                                    let res = if auth::handler_owner() == "launcher" {
+                                        auth::uninstall_oculus_handler(&self.config.lang)
                                     } else {
-                                        auth::install_oculus_handler()
+                                        auth::install_oculus_handler(&self.config.lang)
                                     };
                                     match res {
-                                        Ok(p) => self.status = format!("headset link handler: {p}"),
-                                        Err(e) => {
-                                            self.status = format!("handler change failed: {e}")
-                                        }
+                                        Ok(p) => self.status = i18n::fill(
+                                            tr(&self.config, "login_link_handler").as_str(),
+                                            &[("status", &p)],
+                                        ),
+                                        Err(e) => self.status = i18n::fill(
+                                            tr(&self.config, "handler_change_failed").as_str(),
+                                            &[("msg", &e)],
+                                        ),
                                     }
                                 }
                             }
                         });
                         #[cfg(any(target_os = "linux", target_os = "windows"))]
-                        ui.label(i18n::fill(&tr(&self.config, "headset_link_handler"), &[("status", &auth::handler_status())]));
+                        ui.label(i18n::fill(
+                            &tr(&self.config, "login_link_handler"),
+                            &[("status", &auth::handler_status(&self.config.lang))],
+                        ));
                         ui.label(tr(&self.config, "login_step_2"));
                         ui.horizontal(|ui| {
                             if ui.button(tr(&self.config, "login_btn")).clicked() {
@@ -6890,13 +6901,13 @@ impl eframe::App for App {
         }
         // Folder chooser: egui has no native dialog, so this browses subfolders.
         if let Some((start, target)) = self.dir_popup.clone() {
-            egui::Window::new("Choose a folder")
+            egui::Window::new(tr(&self.config, "dir_popup_title"))
                 .order(egui::Order::Foreground)
                 .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
                 .show(ctx, |ui| {
-                    ui.label(format!(
-                        "inside: {}",
-                        short_path(&start.display().to_string())
+                    ui.label(i18n::fill(
+                        tr(&self.config, "dir_popup_inside").as_str(),
+                        &[("path", &short_path(&start.display().to_string()))],
                     ));
                     let mut subs: Vec<String> = std::fs::read_dir(&start)
                         .map(|rd| {
@@ -6911,24 +6922,30 @@ impl eframe::App for App {
                         .unwrap_or_default();
                     subs.sort();
                     if subs.is_empty() {
-                        ui.label("no subfolders here");
+                        ui.label(tr(&self.config, "dir_popup_none"));
                     }
                     for e in subs.iter().take(30) {
                         let nm = Path::new(e)
                             .file_name()
                             .map(|n| n.to_string_lossy().to_string())
                             .unwrap_or_default();
-                        if ui.button(format!("open {nm}")).clicked() {
+                        if ui
+                            .button(i18n::fill(
+                                tr(&self.config, "dir_popup_open").as_str(),
+                                &[("name", &nm)],
+                            ))
+                            .clicked()
+                        {
                             self.dir_popup = Some((PathBuf::from(e), target));
                         }
                     }
                     ui.separator();
-                    ui.label(format!(
-                        "use this: {}",
-                        short_path(&start.display().to_string())
+                    ui.label(i18n::fill(
+                        tr(&self.config, "dir_popup_use_this").as_str(),
+                        &[("path", &short_path(&start.display().to_string()))],
                     ));
                     ui.horizontal(|ui| {
-                        if ui.button("Use this folder").clicked() {
+                        if ui.button(tr(&self.config, "dir_popup_use")).clicked() {
                             let text = start.display().to_string();
                             match target {
                                 DirTarget::Install => {
@@ -6964,12 +6981,14 @@ impl eframe::App for App {
                             }
                             self.dir_popup = None;
                         }
-                        if start.parent().is_some() && ui.button("Up one level").clicked() {
+                        if start.parent().is_some()
+                            && ui.button(tr(&self.config, "dir_popup_up")).clicked()
+                        {
                             if let Some(p) = start.parent() {
                                 self.dir_popup = Some((p.to_path_buf(), target));
                             }
                         }
-                        if ui.button("Close").clicked() {
+                        if ui.button(tr(&self.config, "dir_popup_close")).clicked() {
                             self.dir_popup = None;
                         }
                     });
@@ -7241,7 +7260,7 @@ fn main() -> eframe::Result {
     }
     if args.get(1).map(|a| a == "install-handler").unwrap_or(false) {
         #[cfg(any(target_os = "linux", target_os = "windows"))]
-        match auth::install_oculus_handler() {
+        match auth::install_oculus_handler("en") {
             Ok(p) => println!("headset link handler installed: {p}"),
             Err(e) => eprintln!("handler install failed: {e}"),
         }
@@ -7255,7 +7274,7 @@ fn main() -> eframe::Result {
         .unwrap_or(false)
     {
         #[cfg(any(target_os = "linux", target_os = "windows"))]
-        match auth::uninstall_oculus_handler() {
+        match auth::uninstall_oculus_handler("en") {
             Ok(p) => println!("{p}"),
             Err(e) => eprintln!("handler uninstall failed: {e}"),
         }

@@ -13,6 +13,7 @@
 
 #[cfg(not(target_os = "windows"))]
 use crate::detect_protons;
+use crate::i18n;
 #[cfg(target_os = "linux")]
 use crate::steam_shortcuts;
 use crate::tr;
@@ -169,8 +170,14 @@ pub fn render(app: &mut App, ui: &mut egui::Ui) {
     ui.vertical_centered(|ui| match step {
         Step::Welcome => {
             load_logo(app, ui);
-            ui.heading("Iris Game Launcher");
+            // Logo and title are larger than the library heading: the first
+            // screen is the brand moment.
             let head = ui.style().text_styles[&egui::TextStyle::Heading].size;
+            ui.label(
+                egui::RichText::new("Iris Game Launcher")
+                    .size(head * 1.5)
+                    .strong(),
+            );
             ui.label(
                 egui::RichText::new(env!("CARGO_PKG_VERSION").trim_end_matches(".0"))
                     .size(head * 0.55),
@@ -253,8 +260,8 @@ pub fn render(app: &mut App, ui: &mut egui::Ui) {
             #[cfg(any(target_os = "linux", target_os = "windows"))]
             ui.label(format!(
                 "{}: {}",
-                tr(&app.config, "headset_link_handler_label"),
-                crate::auth::handler_status()
+                tr(&app.config, "login_link_handler_label"),
+                crate::auth::handler_status(&app.config.lang)
             ));
         }
         Step::Login => {
@@ -396,21 +403,41 @@ pub fn render(app: &mut App, ui: &mut egui::Ui) {
             Action::SetHandler => {
                 #[cfg(target_os = "linux")]
                 {
-                    match crate::auth::install_oculus_handler() {
-                        Ok(p) => app.status = format!("headset link handler: {p}"),
-                        Err(e) => app.status = format!("handler install failed: {e}"),
+                    match crate::auth::install_oculus_handler(&app.config.lang) {
+                        Ok(p) => {
+                            app.status = i18n::fill(
+                                tr(&app.config, "login_link_handler").as_str(),
+                                &[("status", &p)],
+                            )
+                        }
+                        Err(e) => {
+                            app.status = i18n::fill(
+                                tr(&app.config, "handler_install_failed").as_str(),
+                                &[("msg", &e)],
+                            )
+                        }
                     }
                 }
                 #[cfg(target_os = "windows")]
                 {
                     let res = if crate::auth::handler_owner() == "launcher" {
-                        crate::auth::uninstall_oculus_handler()
+                        crate::auth::uninstall_oculus_handler(&app.config.lang)
                     } else {
-                        crate::auth::install_oculus_handler()
+                        crate::auth::install_oculus_handler(&app.config.lang)
                     };
                     match res {
-                        Ok(p) => app.status = format!("headset link handler: {p}"),
-                        Err(e) => app.status = format!("handler change failed: {e}"),
+                        Ok(p) => {
+                            app.status = i18n::fill(
+                                tr(&app.config, "login_link_handler").as_str(),
+                                &[("status", &p)],
+                            )
+                        }
+                        Err(e) => {
+                            app.status = i18n::fill(
+                                tr(&app.config, "handler_change_failed").as_str(),
+                                &[("msg", &e)],
+                            )
+                        }
                     }
                 }
             }
@@ -478,7 +505,7 @@ fn load_logo(app: &mut App, ui: &mut egui::Ui) {
         }
     }
     if let Some(tex) = &app.logo_tex {
-        let side = ui.style().text_styles[&egui::TextStyle::Heading].size * 2.2;
+        let side = ui.style().text_styles[&egui::TextStyle::Heading].size * 3.4;
         ui.add(
             egui::Image::new(tex)
                 .fit_to_exact_size(egui::vec2(side * app.logo_aspect.max(1.0), side)),
