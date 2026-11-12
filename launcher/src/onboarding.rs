@@ -80,6 +80,16 @@ impl Onboarding {
         self.advance()
     }
 
+    /// Back leaves the current step unfinished and returns to the previous
+    /// screen; first screen has nothing to go back to (UI shows it disabled).
+    pub fn back(&mut self) -> bool {
+        if self.index() == 0 {
+            return false;
+        }
+        self.step = Self::steps()[self.index() - 1];
+        true
+    }
+
     #[cfg_attr(not(test), allow(dead_code))]
     pub fn was_skipped(&self, step: Step) -> bool {
         self.skipped.contains(&step)
@@ -144,6 +154,29 @@ pub fn render(app: &mut App, ui: &mut egui::Ui) {
     let mut action: Option<Action> = None;
     let mut next = false;
     let mut finish = false;
+    // Reserve the bottom strip up front, so a tall step never pushes the
+    // Back/Next row off-screen. Two fixed-size rects, centered inside the
+    // strip; Back does nothing on the first screen (no session to go back to).
+    let panel = ui.available_rect_before_wrap();
+    let back_label = tr(&app.config, "onboard_back");
+    let next_label = if step == Step::Games {
+        tr(&app.config, "onboard_finish")
+    } else {
+        tr(&app.config, "onboard_next")
+    };
+    let back_w = back_label.chars().count() as f32 * 7.0 + 24.0;
+    let next_w = next_label.chars().count() as f32 * 7.0 + 24.0;
+    let row_w = back_w + 12.0 + next_w;
+    let pad = ((panel.width() - row_w) * 0.5).max(0.0);
+    let row_y = panel.max.y - 26.0;
+    let back_rect = egui::Rect::from_min_size(
+        panel.min + egui::vec2(pad, row_y - panel.min.y),
+        egui::vec2(back_w, 24.0),
+    );
+    let next_rect = egui::Rect::from_min_size(
+        panel.min + egui::vec2(pad + back_w + 12.0, row_y - panel.min.y),
+        egui::vec2(next_w, 24.0),
+    );
     ui.vertical_centered(|ui| match step {
         Step::Welcome => {
             load_logo(app, ui);
@@ -232,7 +265,7 @@ pub fn render(app: &mut App, ui: &mut egui::Ui) {
             let check = ui.button(tr(&app.config, "check_login")).clicked();
             ui.add(
                 egui::TextEdit::singleline(&mut app.callback_url)
-                    .hint_text("oculus://link/… the link the browser opened")
+                    .hint_text(tr(&app.config, "login_link_hint"))
                     .desired_width(320.0),
             );
             let apply = ui.button(tr(&app.config, "apply_btn")).clicked();
@@ -333,15 +366,23 @@ pub fn render(app: &mut App, ui: &mut egui::Ui) {
         }
     });
 
-    // Next/Finish live at the bottom-right corner: the row fills the
-    // remaining area and Align::Max pins it to the bottom-right.
-    ui.with_layout(egui::Layout::right_to_left(egui::Align::Max), |ui| {
-        if step == Step::Games {
-            finish = ui.button(tr(&app.config, "onboard_finish")).clicked();
-        } else {
-            next = ui.button(tr(&app.config, "onboard_next")).clicked();
-        }
-    });
+    // Draw the reserved row at the bottom strip: Back then Next/Finish,
+    // centered inside the strip. Back is inert on the first screen.
+    let first = app.onboarding.index() == 0;
+    let back_resp = ui.put(
+        back_rect,
+        egui::Button::new(egui::RichText::new(back_label)).min_size(egui::vec2(back_w, 24.0)),
+    );
+    let back = !first && back_resp.clicked();
+    let next_resp = ui.put(
+        next_rect,
+        egui::Button::new(egui::RichText::new(next_label)).min_size(egui::vec2(next_w, 24.0)),
+    );
+    if step == Step::Games {
+        finish = next_resp.clicked();
+    } else {
+        next = next_resp.clicked();
+    }
 
     // Wizard actions run after the drawing closure so app can be borrowed
     // mutably for the handler/login/proton work.
@@ -405,6 +446,9 @@ pub fn render(app: &mut App, ui: &mut egui::Ui) {
     }
     if next {
         app.onboarding.advance();
+    }
+    if back {
+        app.onboarding.back();
     }
     if finish {
         app.onboarding.advance();

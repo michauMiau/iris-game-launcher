@@ -17,6 +17,7 @@ mod auth;
 mod fetcher;
 mod i18n;
 mod onboarding;
+mod proton;
 mod steam_shortcuts;
 
 #[derive(Serialize, Deserialize, Default)]
@@ -3338,7 +3339,7 @@ impl App {
         }
         self.rel_repo = repo.to_string();
         self.rel_inflight = true;
-        self.status = "loading versions from GitHub…".into();
+        self.status = tr(&self.config, "list_loading");
         let repo = repo.to_string();
         let slot = self.rel_slot.clone();
         let repaint = self.ctx.clone();
@@ -3382,7 +3383,7 @@ impl App {
                 self.status = format!("{} versions listed", self.rel_repo);
             }
             Err(e) => {
-                self.status = format!("version list failed: {e}");
+                self.status = i18n::fill(tr(&self.config, "list_failed").as_str(), &[("msg", &e)]);
                 // A failed load must still fire a queued request, even for the
                 // SAME repo pressed twice — otherwise the popup hangs on
                 // "loading the version list…" forever.
@@ -3402,46 +3403,10 @@ impl App {
 
     /// Unpack a chosen Proton GE build into Steam's compatibilitytools.d
     /// (default, picked from Steam) or the launcher's own proton dir.
+    /// The download itself lives in src/proton.rs.
     #[cfg(not(target_os = "windows"))]
     fn install_proton(&mut self) {
-        let Some((tag, name, url)) = self.proton_releases.get(self.proton_pick).cloned() else {
-            self.status = "list Proton versions and pick one first".into();
-            return;
-        };
-        if self.install_inflight {
-            self.status = "an installer is already running".into();
-            return;
-        }
-        let dest = if self.proton_to_steam && steam_present() {
-            steam_compat_dir()
-        } else {
-            if self.proton_to_steam {
-                self.status = "no Steam here — installing into the launcher folder instead".into();
-            }
-            self.data_root().join("proton")
-        };
-        self.install_inflight = true;
-        self.dl_inflight = true;
-        self.dl_key.clear();
-        self.dl_label = format!("Proton {tag}");
-        self.dl_stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        *self.dl_progress.lock().unwrap() = (0, 0, 0, 0);
-        self.status = i18n::fill(
-            i18n::text(i18n::parse(&self.config.lang), "install_tool_x").as_str(),
-            &[("tag", &tag), ("size", "500 MB")],
-        );
-        let slot = self.install_slot.clone();
-        let repaint = self.ctx.clone();
-        let prog = self.dl_progress.clone();
-        let stop = self.dl_stop.clone();
-        std::thread::spawn(move || {
-            let res = fetcher::install_release(&url, &dest, &prog, &stop);
-            *slot.lock().unwrap() =
-                Some(res.map(|_| format!("{name} unpacked into {}", dest.display())));
-            if let Some(c) = repaint {
-                c.request_repaint();
-            }
-        });
+        proton::download(self);
     }
 
     /// Install the chosen MelonLoader release into ONE game, addressed by
@@ -3460,7 +3425,7 @@ impl App {
             }
         };
         if self.install_inflight {
-            self.status = "an installer is already running".into();
+            self.status = tr(&self.config, "installer_busy");
             return;
         }
         if self.dl_busy(idx) {
@@ -3507,7 +3472,7 @@ impl App {
     #[cfg(target_os = "windows")]
     fn download_revive_setup(&mut self) {
         if self.install_inflight {
-            self.status = "an installer is already running".into();
+            self.status = tr(&self.config, "installer_busy");
             return;
         }
         let list = match fetcher::github_releases(
@@ -3516,12 +3481,12 @@ impl App {
         ) {
             Ok(l) => l,
             Err(e) => {
-                self.status = format!("version list failed: {e}");
+                self.status = i18n::fill(tr(&self.config, "list_failed").as_str(), &[("msg", &e)]);
                 return;
             }
         };
         let Some((tag, name, url)) = list.first().cloned() else {
-            self.status = "no ReviveNext release found".into();
+            self.status = tr(&self.config, "revive_none");
             return;
         };
         let dest = self.data_root().join("tools").join(name.clone());
@@ -3531,7 +3496,10 @@ impl App {
         self.dl_label = format!("ReviveNext {tag}");
         self.dl_stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         *self.dl_progress.lock().unwrap() = (0, 0, 0, 0);
-        self.status = format!("downloading {name} ({tag})");
+        self.status = i18n::fill(
+            tr(&self.config, "downloading_x").as_str(),
+            &[("name", &format!("{name} ({tag})"))],
+        );
         let slot = self.install_slot.clone();
         let repaint = self.ctx.clone();
         let prog = self.dl_progress.clone();
@@ -6388,7 +6356,7 @@ impl eframe::App for App {
                         ui.label(tr(&self.config, "login_step_3"));
                         ui.add(
                             egui::TextEdit::singleline(&mut self.callback_url)
-                                .hint_text("oculus://link/… the link the browser opened")
+                                .hint_text(tr(&self.config, "login_link_hint"))
                                 .desired_width(320.0),
                         );
                         let resp = ui.add(
@@ -7117,7 +7085,7 @@ impl eframe::App for App {
                         ui.label("this game is not installed yet — install it first");
                     }
                     if self.melon_releases.is_empty() {
-                        ui.label("loading the version list from GitHub…");
+                        ui.label(tr(&self.config, "proton_version_loading"));
                     } else {
                         for (i, (tag, _, _)) in self.melon_releases.iter().enumerate() {
                             if ui.radio(i == self.melon_pick, tag).clicked() {
@@ -7146,13 +7114,13 @@ impl eframe::App for App {
                 .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
                 .show(ctx, |ui| {
                     if self.proton_releases.is_empty() {
-                        ui.label("loading the release list from GitHub…");
+                        ui.label(tr(&self.config, "proton_release_loading"));
                     } else {
                         let picked = self
                             .proton_releases
                             .get(self.proton_pick)
                             .map(|(tag, asset, _)| format!("{tag} ({asset})"))
-                            .unwrap_or_else(|| "pick a version".into());
+                            .unwrap_or_else(|| tr(&self.config, "proton_pick_version"));
                         egui::ComboBox::from_id_salt("proton_ge_release")
                             .selected_text(picked)
                             .show_ui(ui, |ui| {
