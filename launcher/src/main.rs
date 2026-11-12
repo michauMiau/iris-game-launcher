@@ -6348,6 +6348,14 @@ impl eframe::App for App {
                             &tr(&self.config, "login_link_handler"),
                             &[("status", &auth::handler_status(&self.config.lang))],
                         ));
+                        #[cfg(any(target_os = "linux", target_os = "windows"))]
+                        if auth::handler_owner() != "official" {
+                            ui.label(
+                                egui::RichText::new(tr(&self.config, "handler_warning"))
+                                    .small()
+                                    .weak(),
+                            );
+                        }
                         ui.label(tr(&self.config, "login_step_2"));
                         ui.horizontal(|ui| {
                             if ui.button(tr(&self.config, "login_btn")).clicked() {
@@ -7096,35 +7104,48 @@ impl eframe::App for App {
                 .get(idx)
                 .map(|g| !g.install_dir.is_empty() && !g.partial)
                 .unwrap_or(false);
-            egui::Window::new(format!("MelonLoader for {name}"))
-                .order(egui::Order::Foreground)
-                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-                .show(ctx, |ui| {
-                    if !installed {
-                        ui.label("this game is not installed yet — install it first");
+            egui::Window::new(i18n::fill(
+                tr(&self.config, "melon_popup_title").as_str(),
+                &[("name", &name)],
+            ))
+            .order(egui::Order::Foreground)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(ctx, |ui| {
+                if !installed {
+                    ui.label(tr(&self.config, "melon_not_installed"));
+                }
+                if self.melon_releases.is_empty() {
+                    ui.label(tr(&self.config, "proton_version_loading"));
+                } else {
+                    // Rows: version text left, radio dot right, so each line
+                    // reads like a checkbox on its own column.
+                    for (i, (tag, _, _)) in self.melon_releases.iter().enumerate() {
+                        ui.horizontal(|ui| {
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    if ui.radio(i == self.melon_pick, "").clicked() {
+                                        self.melon_pick = i;
+                                    }
+                                    ui.label(tag.clone());
+                                },
+                            );
+                        });
                     }
-                    if self.melon_releases.is_empty() {
-                        ui.label(tr(&self.config, "proton_version_loading"));
-                    } else {
-                        for (i, (tag, _, _)) in self.melon_releases.iter().enumerate() {
-                            if ui.radio(i == self.melon_pick, tag).clicked() {
-                                self.melon_pick = i;
+                    ui.add_enabled_ui(
+                        installed && !self.install_inflight && !(self.dl_busy(idx)),
+                        |ui| {
+                            if ui.button(tr(&self.config, "melon_install")).clicked() {
+                                self.install_melon(idx);
+                                self.melon_popup = None;
                             }
-                        }
-                        ui.add_enabled_ui(
-                            installed && !self.install_inflight && !(self.dl_busy(idx)),
-                            |ui| {
-                                if ui.button("Install into this game").clicked() {
-                                    self.install_melon(idx);
-                                    self.melon_popup = None;
-                                }
-                            },
-                        );
-                    }
-                    if ui.button("Close").clicked() {
-                        self.melon_popup = None;
-                    }
-                });
+                        },
+                    );
+                }
+                if ui.button(tr(&self.config, "dir_popup_close")).clicked() {
+                    self.melon_popup = None;
+                }
+            });
         }
         #[cfg(not(target_os = "windows"))]
         if self.proton_popup {

@@ -263,6 +263,14 @@ pub fn render(app: &mut App, ui: &mut egui::Ui) {
                 tr(&app.config, "login_link_handler_label"),
                 crate::auth::handler_status(&app.config.lang)
             ));
+            #[cfg(any(target_os = "linux", target_os = "windows"))]
+            if crate::auth::handler_owner() != "official" {
+                ui.label(
+                    egui::RichText::new(tr(&app.config, "handler_warning"))
+                        .small()
+                        .weak(),
+                );
+            }
         }
         Step::Login => {
             ui.heading(tr(&app.config, "onboard_login_head"));
