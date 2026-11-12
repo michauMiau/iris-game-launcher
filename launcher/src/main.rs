@@ -1185,7 +1185,6 @@ const REVIVE_VR_BYTES: &[u8] = include_bytes!("../../assets/LibRevive64.dll");
 /// The original is kept beside the file as OVRPlugin.dll.orig, and the shim
 /// bridges the plugin API into the Revive runtime we already place beside
 /// the exe. This must run on EVERY launch (see librevive_rt_step for why).
-#[cfg(not(target_os = "windows"))]
 fn ovrplugin_shim_step(game_dir: &Path) -> Option<PathBuf> {
     const SHIM_BYTES: &[u8] = include_bytes!("../../assets/ovrplugin-shim.dll");
     if !game_dir.is_dir() {
@@ -1195,16 +1194,24 @@ fn ovrplugin_shim_step(game_dir: &Path) -> Option<PathBuf> {
     if let Ok(rd) = std::fs::read_dir(game_dir) {
         for e in rd.filter_map(|x| x.ok()) {
             let p = e.path();
-            if p.is_dir()
+            let is_data = p.is_dir()
                 && p.file_name()
                     .map(|n| n.to_string_lossy().ends_with("_Data"))
-                    .unwrap_or(false)
-            {
-                let cand = p.join("Plugins").join("OVRPlugin.dll");
+                    .unwrap_or(false);
+            if !is_data {
+                continue;
+            }
+            for cand in [
+                p.join("Plugins").join("OVRPlugin.dll"),
+                p.join("Plugins").join("x86_64").join("OVRPlugin.dll"),
+            ] {
                 if cand.is_file() {
                     target = Some(cand);
                     break;
                 }
+            }
+            if target.is_some() {
+                break;
             }
         }
     }
@@ -4722,10 +4729,11 @@ impl App {
             // loaddll trace), so no beside-exe placement can intercept them.
             // The only interception point is OVRPlugin.dll itself: swap it for
             // the ovrp shim, which bridges into the runtime we already place.
+            // Place the plugin shim on every Proton launch (even without a
+            // detected VR runtime) so it can answer plugin probes and emit
+            // trace logs for testing.
             #[cfg(not(target_os = "windows"))]
-            if use_proton
-                && steamvr_runtime_root(&std::env::var("HOME").unwrap_or_default()).is_some()
-            {
+            if use_proton {
                 if let Some(p) = ovrplugin_shim_step(game_dir) {
                     auth::log_line(&format!("plugin shim placed: {}", p.display()));
                 }
@@ -4906,8 +4914,12 @@ impl App {
                     }
                 }
             }
-            if let Some(shim) = platform_shim_step(exe.parent().unwrap_or(Path::new("."))) {
+            let game_dir = exe.parent().unwrap_or(Path::new("."));
+            if let Some(shim) = platform_shim_step(game_dir) {
                 auth::log_line(&format!("platform shim placed: {}", shim.display()));
+            }
+            if let Some(p) = ovrplugin_shim_step(game_dir) {
+                auth::log_line(&format!("plugin shim placed: {}", p.display()));
             }
             if let Some(pid) = revive_injector_start(&self.data_root().join("tools")) {
                 auth::log_line(&format!("revive layer: injector started pid {pid}"));
