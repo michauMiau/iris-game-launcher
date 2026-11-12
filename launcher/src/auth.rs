@@ -459,10 +459,7 @@ pub fn uninstall_oculus_handler(lang: &str) -> Result<String, String> {
     let _ = Command::new("update-desktop-database")
         .arg(&apps_dir)
         .spawn();
-    Ok(i18n::text(
-        i18n::parse(lang),
-        "handler_back_linux",
-    ))
+    Ok(i18n::text(i18n::parse(lang), "handler_back_linux"))
 }
 
 /// Register this launcher as the handler for oculus:// callback URLs.
@@ -492,10 +489,7 @@ pub fn install_oculus_handler(lang: &str) -> Result<String, String> {
     let _ = Command::new("update-desktop-database")
         .arg(&apps_dir)
         .spawn();
-    Ok(i18n::text(
-        i18n::parse(lang),
-        "handler_set_ok",
-    ))
+    Ok(i18n::text(i18n::parse(lang), "handler_set_ok"))
 }
 
 /// Windows: register oculus:// under HKCU\Software\Classes, which the shell
@@ -534,10 +528,7 @@ pub fn install_oculus_handler(lang: &str) -> Result<String, String> {
             String::from_utf8_lossy(&out.stderr)
         ));
     }
-    Ok(i18n::text(
-        i18n::parse(lang),
-        "handler_set_ok",
-    ))
+    Ok(i18n::text(i18n::parse(lang), "handler_set_ok"))
 }
 
 #[cfg(target_os = "windows")]
@@ -607,8 +598,7 @@ pub fn handler_status(lang: &str) -> String {
                 )
             } else {
                 i18n::fill(
-                    i18n::text(i18n::parse(lang), "handler_status_win_other")
-                        .as_str(),
+                    i18n::text(i18n::parse(lang), "handler_status_win_other").as_str(),
                     &[("cmd", &cmd)],
                 )
             }
@@ -629,10 +619,7 @@ pub fn uninstall_oculus_handler(lang: &str) -> Result<String, String> {
             String::from_utf8_lossy(&out.stderr)
         ));
     }
-    Ok(i18n::text(
-        i18n::parse(lang),
-        "handler_back_win",
-    ))
+    Ok(i18n::text(i18n::parse(lang), "handler_back_win"))
 }
 
 pub fn open_browser(url: &str) -> Result<(), String> {

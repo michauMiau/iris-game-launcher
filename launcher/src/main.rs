@@ -1188,7 +1188,6 @@ const REVIVE_VR_BYTES: &[u8] = include_bytes!("../../assets/LibRevive64.dll");
 #[cfg(not(target_os = "windows"))]
 fn ovrplugin_shim_step(game_dir: &Path) -> Option<PathBuf> {
     const SHIM_BYTES: &[u8] = include_bytes!("../../assets/ovrplugin-shim.dll");
-    const SHIM_LEN: u64 = SHIM_BYTES.len() as u64;
     if !game_dir.is_dir() {
         return None;
     }
@@ -1211,7 +1210,7 @@ fn ovrplugin_shim_step(game_dir: &Path) -> Option<PathBuf> {
     }
     let target = target?;
     if std::fs::read(&target)
-        .map(|b| b.len() as u64 == SHIM_LEN)
+        .map(|b| b.as_slice() == SHIM_BYTES)
         .unwrap_or(false)
     {
         return Some(target);
