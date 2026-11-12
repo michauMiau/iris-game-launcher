@@ -12,7 +12,7 @@ static INITIALIZED: AtomicBool = AtomicBool::new(false);
 /// Build label emitted as the first trace line so logs self-identify which
 /// shim build produced them (assets/ovrplugin-shim.dll is rebuilt from this
 /// repo's sources; the label here is the source of truth, then git tag).
-pub const SHIM_BUILD_LABEL: &str = "ovrplugin-shim 0.1.23-abi";
+pub const SHIM_BUILD_LABEL: &str = "ovrplugin-shim 0.1.24-abi";
 
 /// Lazy bring-up: Unity's Oculus integration polls GetInitialized without
 /// ever calling Initialize on this plugin build (measured on Boneworks:
@@ -172,6 +172,7 @@ extern "system" {
     fn LoadLibraryW(library: *const u16) -> isize;
     fn GetProcAddress(module: isize, procedure: *const c_char) -> *mut c_void;
     fn FreeLibrary(module: isize) -> i32;
+    fn GetLastError() -> u32;
 }
 
 /// Loads the Revive runtime positioned beside the game exe as
@@ -246,9 +247,11 @@ pub fn compat_initialize() -> i32 {
         LoadLibraryW(name.as_ptr())
     };
     if module == 0 {
-        record("compat_initialize: LibOVRRT64_1.dll not found/load failed");
+        let err = unsafe { GetLastError() };
+        record(&format!("compat_initialize: LibOVRRT64_1.dll not found/load failed (GetLastError={err})"));
         return -1003; // ovrError_InvalidOperation: no runtime found
     }
+    record(&format!("compat_initialize: module loaded {module:#x}"));
     let raw_init = unsafe {
         GetProcAddress(module, b"ovr_Initialize\0".as_ptr() as *const c_char)
     };
@@ -256,21 +259,26 @@ pub fn compat_initialize() -> i32 {
         GetProcAddress(module, b"ovr_Create\0".as_ptr() as *const c_char)
     };
     if raw_init.is_null() || raw_create.is_null() {
-        record("compat_initialize: missing ovr_Initialize or ovr_Create");
+        let err = unsafe { GetLastError() };
+        record(&format!("compat_initialize: missing ovr_Initialize or ovr_Create (GetLastError={err})"));
         unsafe { let _ = FreeLibrary(module); }
         return -1003;
     }
     let ovr_initialize: FnOvrInitialize = unsafe { std::mem::transmute(raw_init) };
     let ovr_create: FnOvrCreate = unsafe { std::mem::transmute(raw_create) };
-    if unsafe { ovr_initialize(std::ptr::null()) } != 0 {
-        record("compat_initialize: ovr_Initialize failed");
+    record("compat_initialize: calling ovr_Initialize");
+    let init_rc = unsafe { ovr_initialize(std::ptr::null()) };
+    record(&format!("compat_initialize: ovr_Initialize rc {init_rc}"));
+    if init_rc != 0 {
         unsafe { let _ = FreeLibrary(module); }
         return -1003;
     }
     let mut session: *mut c_void = std::ptr::null_mut();
     let mut hmd: *mut c_void = std::ptr::null_mut();
-    if unsafe { ovr_create(&mut session, &mut hmd) } != 0 || session.is_null() {
-        record("compat_initialize: ovr_Create failed");
+    record("compat_initialize: calling ovr_Create");
+    let create_rc = unsafe { ovr_create(&mut session, &mut hmd) };
+    record(&format!("compat_initialize: ovr_Create rc {create_rc} session_is_null={}", session.is_null()));
+    if create_rc != 0 || session.is_null() {
         unsafe { let _ = FreeLibrary(module); }
         return -1000;
     }
