@@ -12,7 +12,7 @@ static INITIALIZED: AtomicBool = AtomicBool::new(false);
 /// Build label emitted as the first trace line so logs self-identify which
 /// shim build produced them (assets/ovrplugin-shim.dll is rebuilt from this
 /// repo's sources; the label here is the source of truth, then git tag).
-pub const SHIM_BUILD_LABEL: &str = "ovrplugin-shim 0.1.25-abi";
+pub const SHIM_BUILD_LABEL: &str = "ovrplugin-shim 0.1.26-abi";
 
 /// Lazy bring-up: Unity's Oculus integration polls GetInitialized without
 /// ever calling Initialize on this plugin build (measured on Boneworks:
@@ -355,6 +355,40 @@ pub fn get_eye_desc(out: *mut EyeDesc) -> i32 {
     }
     1
 }
+
+#[allow(non_camel_case_types)]
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct HapticsDesc {
+    pub sample_rate_hz: i32,
+    pub sample_size_in_bytes: i32,
+    pub minimum_safe_samples_queued: i32,
+    pub minimum_buffer_samples_count: i32,
+    pub optimal_buffer_samples_count: i32,
+    pub maximum_buffer_samples_count: i32,
+}
+
+#[allow(non_camel_case_types)]
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct HapticsState {
+    pub samples_available: i32,
+    pub samples_queued: i32,
+}
+
+#[allow(non_camel_case_types)]
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct Posef {
+    pub orientation_x: f32,
+    pub orientation_y: f32,
+    pub orientation_z: f32,
+    pub orientation_w: f32,
+    pub position_x: f32,
+    pub position_y: f32,
+    pub position_z: f32,
+}
+
 // ---- generated export stubs ----
 #[export_name = "?ovrp_SetFunctionPointer@@YA?AW4ovrpResult@@W4ovrpFunctionType@@PEAX@Z"]
 pub extern "C" fn ovrp_set_function_pointer_alias(a0: i32, a1: *mut std::os::raw::c_void) -> i32 {
@@ -614,9 +648,10 @@ pub extern "C" fn ovrp_GetAdaptiveGpuPerformanceScale2() -> i32 {
 }
 
 #[no_mangle]
-pub extern "C" fn ovrp_GetAppAsymmetricFov(a0: *mut i32) -> i32 {
+pub extern "C" fn ovrp_GetAppAsymmetricFov(out: *mut i32) -> i32 {
     crate::trace_call("ovrp_GetAppAsymmetricFov");
-   0
+    if !out.is_null() { unsafe { *out = 0; } }
+    0
 }
 
 #[no_mangle]
@@ -924,9 +959,16 @@ pub extern "C" fn ovrp_GetConnectedControllers2() -> i32 {
 }
 
 #[no_mangle]
-pub extern "C" fn ovrp_GetControllerHapticsDesc(a0: u32) -> i32 {
+pub extern "C" fn ovrp_GetControllerHapticsDesc(_controller_mask: u32) -> HapticsDesc {
     crate::trace_call("ovrp_GetControllerHapticsDesc");
-   0
+    HapticsDesc {
+        sample_rate_hz: 320,
+        sample_size_in_bytes: 1,
+        minimum_safe_samples_queued: 4,
+        minimum_buffer_samples_count: 16,
+        optimal_buffer_samples_count: 32,
+        maximum_buffer_samples_count: 64,
+    }
 }
 
 #[no_mangle]
@@ -936,9 +978,9 @@ pub extern "C" fn ovrp_GetControllerHapticsDesc2() -> i32 {
 }
 
 #[no_mangle]
-pub extern "C" fn ovrp_GetControllerHapticsState(a0: u32) -> i32 {
+pub extern "C" fn ovrp_GetControllerHapticsState(_controller_mask: u32) -> HapticsState {
     crate::trace_call("ovrp_GetControllerHapticsState");
-   0
+    HapticsState { samples_available: 64, samples_queued: 0 }
 }
 
 #[no_mangle]
@@ -1527,9 +1569,10 @@ pub extern "C" fn ovrp_GetSystemDisplayFrequency() -> f32 {
 }
 
 #[no_mangle]
-pub extern "C" fn ovrp_GetSystemDisplayFrequency2(a0: *mut f32) -> i32 {
+pub extern "C" fn ovrp_GetSystemDisplayFrequency2(out: *mut f32) -> i32 {
     crate::trace_call("ovrp_GetSystemDisplayFrequency2");
-   0
+    if !out.is_null() { unsafe { *out = 90.0; } }
+    0
 }
 
 #[no_mangle]
@@ -1755,9 +1798,22 @@ pub extern "C" fn ovrp_GetTrackingTransformRawPose(a0: *mut i64) -> i32 {
 }
 
 #[no_mangle]
-pub extern "C" fn ovrp_GetTrackingTransformRelativePose(a0: *mut i64, a1: i32) -> i32 {
+pub extern "C" fn ovrp_GetTrackingTransformRelativePose(out: *mut Posef, _tracking_origin: i32) -> i32 {
     crate::trace_call("ovrp_GetTrackingTransformRelativePose");
-   0
+    if !out.is_null() {
+        unsafe {
+            *out = Posef {
+                orientation_x: 0.0,
+                orientation_y: 0.0,
+                orientation_z: 0.0,
+                orientation_w: 1.0,
+                position_x: 0.0,
+                position_y: 0.0,
+                position_z: 0.0,
+            };
+        }
+    }
+    0
 }
 
 #[no_mangle]
