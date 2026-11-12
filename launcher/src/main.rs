@@ -16,6 +16,8 @@ mod achievements;
 mod auth;
 mod fetcher;
 mod i18n;
+mod onboarding;
+mod steam_shortcuts;
 
 #[derive(Serialize, Deserialize, Default)]
 struct Config {
@@ -56,6 +58,15 @@ struct Config {
     /// UI language: "en" or "pl". Other languages are just new tables in i18n.
     #[serde(default = "default_lang")]
     lang: String,
+    /// First-run wizard completes when the last step finishes; configs written
+    /// by older versions (no field) treat setup as already done, while a fresh
+    /// Config default starts false so the wizard opens on first run.
+    #[serde(default = "default_setup_done")]
+    setup_done: bool,
+}
+
+fn default_setup_done() -> bool {
+    true
 }
 
 /// First-run UI defaults follow the desktop, not the shipped constants: the
@@ -463,6 +474,8 @@ struct App {
     /// Name shown in the top download row while the download is a tool
     /// (Proton / MelonLoader) rather than a game.
     dl_label: String,
+    /// First-run wizard state; see src/onboarding.rs.
+    onboarding: onboarding::Onboarding,
 }
 
 /// Shared background-result slot used by every worker thread.
@@ -2692,6 +2705,7 @@ impl App {
             tweak_popup: None,
             tweak_args: String::new(),
             tweak_env: String::new(),
+            onboarding: onboarding::Onboarding::new(fresh_config),
         }
     }
 
@@ -5847,6 +5861,17 @@ impl App {
                 }
             });
         }
+        #[cfg(target_os = "linux")]
+        if installed {
+            ui.horizontal(|ui| {
+                if ui
+                    .button(tr(&self.config, "onboard_add_to_steam"))
+                    .clicked()
+                {
+                    steam_shortcuts::add_to_steam(self, idx);
+                }
+            });
+        }
     }
 }
 
@@ -5971,6 +5996,10 @@ impl eframe::App for App {
         });
         let settings = self.settings_page;
         egui::CentralPanel::default().show(ctx, |ui| {
+            if self.onboarding.active {
+                onboarding::render(self, ui);
+                return;
+            }
             ui.horizontal(|ui| {
                 // App logo beside the title, sized to the heading text.
                 if self.logo_tex.is_none() {
@@ -6101,6 +6130,10 @@ impl eframe::App for App {
                                     }
                                 }
                             });
+                            if ui.button(tr(&self.config, "onboard_setup_guide")).clicked() {
+                                self.onboarding = onboarding::Onboarding::new(true);
+                                self.settings_page = false;
+                            }
                         });
                     });
                     egui::Frame::group(ui.style()).show(ui, |ui| {

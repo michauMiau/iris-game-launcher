@@ -4,6 +4,7 @@ mod auth;
 mod fetcher;
 mod i18n;
 mod launch;
+mod onboarding;
 mod settings;
 mod stop;
 mod vr;
