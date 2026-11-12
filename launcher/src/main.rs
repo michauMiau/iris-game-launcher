@@ -1790,7 +1790,12 @@ fn update_verdict(g: &GameEntry, branch: usize) -> String {
     }
     match g.branches.get(branch) {
         Some(b) if b.version_code > g.version_code => {
-            format!("update available — {} ({})", b.name, b.version)
+            let from = if g.version.trim().is_empty() {
+                "installed".to_string()
+            } else {
+                g.version.clone()
+            };
+            format!("update available: {from} → {} ({})", b.version, b.name)
         }
         Some(_) => "no update available — this build is the newest".to_string(),
         None => "no store channels yet — press Check updates first".to_string(),
@@ -2833,7 +2838,7 @@ impl App {
             auth::log_line(&format!(
                 "callback arrived token={} blob={}",
                 auth::log_peek(&self.session.frl_request),
-                self.session.frl_blob
+                auth::log_peek(&self.session.frl_blob)
             ));
             // The blob is single-use and the vendor expires it server-side, so
             // redeem the moment the callback lands instead of waiting for
@@ -2892,7 +2897,11 @@ impl App {
         if !self.callback_url.is_empty() {
             match auth::callback_params(&self.callback_url) {
                 Some((t, b)) => {
-                    auth::log_line(&format!("callback pasted token={t} blob={b}"));
+                    auth::log_line(&format!(
+                        "callback pasted token={} blob={}",
+                        auth::log_peek(&t),
+                        auth::log_peek(&b)
+                    ));
                     self.session.frl_request = t;
                     self.session.frl_blob = b;
                     self.callback_url.clear();
@@ -3947,7 +3956,12 @@ impl App {
         let g = self.store.apps.get(self.selected)?;
         let b = g.branches.get(self.selected_branch)?;
         if b.version_code > g.version_code {
-            Some(format!("{} -> {} ({})", g.version, b.name, b.version))
+            let from = if g.version.trim().is_empty() {
+                "?"
+            } else {
+                g.version.as_str()
+            };
+            Some(format!("{from} → {} ({})", b.version, b.name))
         } else {
             None
         }
@@ -5784,53 +5798,16 @@ impl App {
                 if let Some(desc) = self.update_available() {
                     ui.colored_label(
                         egui::Color32::from_rgb(240, 200, 120),
-                        format!("newer version out: {desc}"),
+                        format!("Update available: {desc}"),
                     );
                 }
             });
         });
         ui.separator();
-        // Controls below the fold: Play/Reinstall and the release channel.
+        // Controls: channel/check/update on the left, Play/Reinstall on the right.
         ui.horizontal(|ui| {
-            if self.running_flag.load(std::sync::atomic::Ordering::Relaxed) {
-                // While the game lives, the button reads Running and
-                // a click asks for confirmation before killing it.
-                if ui
-                    .add(
-                        egui::Button::new(tr(&self.config, "running"))
-                            .min_size(egui::vec2(120.0, 34.0)),
-                    )
-                    .clicked()
-                {
-                    self.stop_ask = Some(true);
-                }
-            } else {
-                ui.add_enabled_ui(installed && !(self.dl_busy(idx)), |ui| {
-                    if ui
-                        .add(
-                            egui::Button::new(tr(&self.config, "play"))
-                                .min_size(egui::vec2(120.0, 34.0)),
-                        )
-                        .clicked()
-                    {
-                        self.launch();
-                    }
-                });
-            }
-            ui.add_enabled_ui(self.installable(idx), |ui| {
-                if ui
-                    .add(
-                        egui::Button::new(if installed { "Reinstall" } else { "Install" })
-                            .min_size(egui::vec2(120.0, 34.0)),
-                    )
-                    .clicked()
-                {
-                    self.open_install();
-                }
-            });
-        });
-        if !g.branches.is_empty() {
-            ui.horizontal_wrapped(|ui| {
+            let has_token = !self.session.token.is_empty();
+            if !g.branches.is_empty() {
                 ui.label(tr(&self.config, "channel_label"));
                 if self.selected_branch >= g.branches.len() {
                     self.selected_branch = 0;
@@ -5848,8 +5825,66 @@ impl App {
                             ui.selectable_value(&mut self.selected_branch, i, label);
                         }
                     });
+            }
+            let update_desc = self.update_available();
+            let update_btn = if let Some(ref desc) = update_desc {
+                format!("Update: {desc}")
+            } else if self.ch_inflight {
+                "Checking updates…".to_string()
+            } else {
+                tr(&self.config, "check_updates")
+            };
+            ui.add_enabled_ui(has_token && !self.ch_inflight && !self.dl_busy(idx), |ui| {
+                let resp = ui.add(egui::Button::new(update_btn).min_size(egui::vec2(170.0, 34.0)));
+                if resp.clicked() {
+                    if update_desc.is_some() {
+                        self.open_install();
+                    } else {
+                        self.list_channels();
+                    }
+                }
+                if update_desc.is_none() && !g.branches.is_empty() && !self.ch_inflight {
+                    resp.on_hover_text(tr(&self.config, "update_none"));
+                }
             });
-        }
+
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.add_enabled_ui(self.installable(idx), |ui| {
+                    if ui
+                        .add(
+                            egui::Button::new(if installed { "Reinstall" } else { "Install" })
+                                .min_size(egui::vec2(120.0, 34.0)),
+                        )
+                        .clicked()
+                    {
+                        self.open_install();
+                    }
+                });
+                if self.running_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                    if ui
+                        .add(
+                            egui::Button::new(tr(&self.config, "running"))
+                                .min_size(egui::vec2(120.0, 34.0)),
+                        )
+                        .clicked()
+                    {
+                        self.stop_ask = Some(true);
+                    }
+                } else {
+                    ui.add_enabled_ui(installed && !(self.dl_busy(idx)), |ui| {
+                        if ui
+                            .add(
+                                egui::Button::new(tr(&self.config, "play"))
+                                    .min_size(egui::vec2(120.0, 34.0)),
+                            )
+                            .clicked()
+                        {
+                            self.launch();
+                        }
+                    });
+                }
+            });
+        });
         #[cfg(target_os = "linux")]
         if installed {
             ui.horizontal(|ui| {
@@ -7346,9 +7381,9 @@ fn main() -> eframe::Result {
                 app.session.frl_request = token_param.clone();
                 app.session.frl_blob = blob.clone();
                 auth::log_line(&format!(
-                    "callback via --url token={} blob={blob}",
+                    "callback via --url token={} blob={}",
                     auth::log_peek(&token_param),
-                    blob = blob
+                    auth::log_peek(&blob)
                 ));
                 // request_token must be the native SSO token whose sha256[..16]
                 // equals the URL token param, same gate as the GUI redeem.
@@ -7459,7 +7494,9 @@ fn main() -> eframe::Result {
                 println!("callback found in HAR: login token and login code extracted");
                 {
                     auth::log_line(&format!(
-                        "callback via --har token={token_param} blob={blob}"
+                        "callback via --har token={} blob={}",
+                        auth::log_peek(&token_param),
+                        auth::log_peek(&blob)
                     ));
                     app.session.frl_request = token_param.clone();
                     app.session.frl_blob = blob.clone();
