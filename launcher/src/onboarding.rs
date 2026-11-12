@@ -163,9 +163,9 @@ pub fn render(app: &mut App, ui: &mut egui::Ui) {
     } else {
         tr(&app.config, "onboard_next")
     };
-    let back_w = back_label.chars().count() as f32 * 7.0 + 24.0;
-    let next_w = next_label.chars().count() as f32 * 7.0 + 24.0;
-    let pad = ((ui.available_width() - back_w - 12.0 - next_w) * 0.5).max(0.0);
+    // Same width for Back and Next so they look identical; bold labels.
+    let btn_w = back_label.chars().count().max(next_label.chars().count()) as f32 * 7.0 + 28.0;
+    let pad = ((ui.available_width() - (btn_w * 2.0 + 12.0)) * 0.5).max(0.0);
     ui.vertical_centered(|ui| match step {
         Step::Welcome => {
             load_logo(app, ui);
@@ -178,7 +178,17 @@ pub fn render(app: &mut App, ui: &mut egui::Ui) {
             ui.label(tr(&app.config, "onboard_welcome_hint"));
             let mut pick_lang: Option<String> = None;
             let mut pick_theme: Option<String> = None;
+            // The language/theme row lives centered too: a horizontal layout
+            // would otherwise stretch across the whole panel and sit left.
+            // Row width is estimated from the current language label lengths.
+            let est = if app.config.lang == "pl" {
+                250.0
+            } else {
+                220.0
+            };
+            let row_pad = ((ui.available_width() - est) * 0.5).max(0.0);
             ui.horizontal(|ui| {
+                ui.add_space(row_pad);
                 ui.label(tr(&app.config, "language"));
                 let cur_lang = tr(&app.config, &format!("lang_{}", app.config.lang));
                 ui.menu_button(cur_lang, |ui| {
@@ -364,14 +374,18 @@ pub fn render(app: &mut App, ui: &mut egui::Ui) {
     ui.horizontal(|ui| {
         ui.add_space(pad);
         let resp = ui.add(
-            egui::Button::new(egui::RichText::new(back_label.clone()))
-                .min_size(egui::vec2(back_w, 24.0)),
+            egui::Button::new(egui::RichText::new(back_label.clone()).strong())
+                .min_size(egui::vec2(btn_w, 26.0)),
         );
         back = !first && resp.clicked();
+        let resp = ui.add(
+            egui::Button::new(egui::RichText::new(next_label.clone()).strong())
+                .min_size(egui::vec2(btn_w, 26.0)),
+        );
         if step == Step::Games {
-            finish = ui.button(next_label.clone()).clicked();
+            finish = resp.clicked();
         } else {
-            next = ui.button(next_label.clone()).clicked();
+            next = resp.clicked();
         }
     });
 
