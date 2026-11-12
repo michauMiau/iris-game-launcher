@@ -4,10 +4,10 @@
 // language/theme and showing an empty library) left new users without any
 // pointer to what to configure.
 //
-// Steps mirror the settings page but in a guided order: appearance (language
-// and theme were already pre-filled from the desktop on first run, see
-// App::new), headset link handler, login, runtime (Proton on Linux, Revive on
-// Windows), then adding already-downloaded games to the library. Nested egui
+// Layout rules: the counter sits in the same top row as the skip button;
+// language and theme live on the first screen (they were already pre-filled
+// from the desktop on first run, see App::new); important buttons and logo are
+// centered; Next/Finish anchors to the bottom-right corner. Nested egui
 // closures take immutable reads of app only; wizard writes go through local
 // flags applied after the drawing closures end.
 
@@ -22,7 +22,6 @@ use eframe::egui;
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Step {
     Welcome,
-    Appearance,
     Handler,
     Login,
     Runtime,
@@ -44,10 +43,9 @@ impl Onboarding {
         }
     }
 
-    pub fn steps() -> [Step; 6] {
+    pub fn steps() -> [Step; 5] {
         [
             Step::Welcome,
-            Step::Appearance,
             Step::Handler,
             Step::Login,
             Step::Runtime,
@@ -105,24 +103,17 @@ enum Action {
 }
 
 pub fn render(app: &mut App, ui: &mut egui::Ui) {
-    // Skip lives in the top-right corner, small and quiet: the wizard's own
-    // actions are the main focus, not skipping them. The layout fills only
-    // the row height (a plain with_layout would consume the whole panel and
-    // leave the wizard content off-screen).
+    // Skip is small, quiet and bare ("Skip"/"Pomiń"), in the top-right corner.
+    // The counter shares the same row: push it right with a spacer instead of
+    // a layout, so both sit at equal height.
     let mut skip = false;
-    ui.horizontal(|ui| {
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            skip = ui.small_button(tr(&app.config, "onboard_skip")).clicked();
-        });
-    });
-
     let step = app.onboarding.step;
     let n = app.onboarding.index() + 1;
     let total = Onboarding::steps().len();
     let skipped = app.onboarding.skipped.clone();
     let mut reopen: Option<Step> = None;
+    let skip_w = 44.0;
     ui.horizontal(|ui| {
-        ui.label(tr(&app.config, "onboard_step_x"));
         ui.label(format!("{n}/{total}"));
         for s in skipped.iter().copied() {
             let label = format!(
@@ -134,6 +125,9 @@ pub fn render(app: &mut App, ui: &mut egui::Ui) {
                 reopen = Some(s);
             }
         }
+        let space = (ui.available_width() - skip_w).max(0.0);
+        ui.add_space(space);
+        skip = ui.small_button(tr(&app.config, "onboard_skip")).clicked();
     });
     if let Some(s) = reopen {
         app.onboarding.step = s;
@@ -160,11 +154,6 @@ pub fn render(app: &mut App, ui: &mut egui::Ui) {
                     .size(head * 0.55),
             );
             ui.label(tr(&app.config, "onboard_welcome_hint"));
-            next = ui.button(tr(&app.config, "onboard_next")).clicked();
-        }
-        Step::Appearance => {
-            ui.heading(tr(&app.config, "onboard_appearance_head"));
-            ui.label(tr(&app.config, "onboard_appearance_hint"));
             let mut pick_lang: Option<String> = None;
             let mut pick_theme: Option<String> = None;
             ui.horizontal(|ui| {
@@ -200,7 +189,6 @@ pub fn render(app: &mut App, ui: &mut egui::Ui) {
                 app.config.theme = theme;
                 app.save_config();
             }
-            next = ui.button(tr(&app.config, "onboard_next")).clicked();
         }
         Step::Handler => {
             ui.heading(tr(&app.config, "onboard_handler_head"));
@@ -236,7 +224,6 @@ pub fn render(app: &mut App, ui: &mut egui::Ui) {
                 tr(&app.config, "headset_link_handler_label"),
                 crate::auth::handler_status()
             ));
-            next = ui.button(tr(&app.config, "onboard_next")).clicked();
         }
         Step::Login => {
             ui.heading(tr(&app.config, "onboard_login_head"));
@@ -263,7 +250,6 @@ pub fn render(app: &mut App, ui: &mut egui::Ui) {
             if apply {
                 action = Some(Action::ApplyCallback);
             }
-            next = ui.button(tr(&app.config, "onboard_next")).clicked();
         }
         Step::Runtime => {
             ui.heading(tr(&app.config, "onboard_runtime_head"));
@@ -317,7 +303,6 @@ pub fn render(app: &mut App, ui: &mut egui::Ui) {
                         .desired_width(320.0),
                 );
             }
-            next = ui.button(tr(&app.config, "onboard_next")).clicked();
         }
         Step::Games => {
             ui.heading(tr(&app.config, "onboard_games_head"));
@@ -345,7 +330,16 @@ pub fn render(app: &mut App, ui: &mut egui::Ui) {
             if import {
                 action = Some(Action::ImportFolder);
             }
+        }
+    });
+
+    // Next/Finish live at the bottom-right corner: the row fills the
+    // remaining area and Align::Max pins it to the bottom-right.
+    ui.with_layout(egui::Layout::right_to_left(egui::Align::Max), |ui| {
+        if step == Step::Games {
             finish = ui.button(tr(&app.config, "onboard_finish")).clicked();
+        } else {
+            next = ui.button(tr(&app.config, "onboard_next")).clicked();
         }
     });
 
@@ -446,7 +440,6 @@ fn load_logo(app: &mut App, ui: &mut egui::Ui) {
 pub fn step_name(step: Step) -> &'static str {
     match step {
         Step::Welcome => "welcome",
-        Step::Appearance => "appearance",
         Step::Handler => "handler",
         Step::Login => "login",
         Step::Runtime => "runtime",

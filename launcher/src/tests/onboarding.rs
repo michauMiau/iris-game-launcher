@@ -7,8 +7,6 @@ fn wizard_steps_advance_in_order_and_finish_at_games() {
     let mut w = Onboarding::new(true);
     assert_eq!(w.step, Step::Welcome);
     assert!(!w.advance());
-    assert_eq!(w.step, Step::Appearance);
-    assert!(!w.advance());
     assert_eq!(w.step, Step::Handler);
     assert!(!w.advance());
     assert_eq!(w.step, Step::Login);
@@ -26,7 +24,7 @@ fn skipping_a_step_records_it_and_stays_reopenable() {
     let mut w = Onboarding::new(true);
     w.skip_current();
     assert!(w.was_skipped(Step::Welcome));
-    assert_eq!(w.step, Step::Appearance);
+    assert_eq!(w.step, Step::Handler);
     w.skipped.push(Step::Handler);
     assert_eq!(w.index(), 1);
 }
