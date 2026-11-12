@@ -154,10 +154,9 @@ pub fn render(app: &mut App, ui: &mut egui::Ui) {
     let mut action: Option<Action> = None;
     let mut next = false;
     let mut finish = false;
-    // Reserve the bottom strip up front, so a tall step never pushes the
-    // Back/Next row off-screen. Two fixed-size rects, centered inside the
-    // strip; Back does nothing on the first screen (no session to go back to).
-    let panel = ui.available_rect_before_wrap();
+    // Buttons live right below the step content (the middle of the screen),
+    // centered horizontally: a spacer inside the row places them at the
+    // middle, not anchored to the bottom strip.
     let back_label = tr(&app.config, "onboard_back");
     let next_label = if step == Step::Games {
         tr(&app.config, "onboard_finish")
@@ -166,21 +165,11 @@ pub fn render(app: &mut App, ui: &mut egui::Ui) {
     };
     let back_w = back_label.chars().count() as f32 * 7.0 + 24.0;
     let next_w = next_label.chars().count() as f32 * 7.0 + 24.0;
-    let row_w = back_w + 12.0 + next_w;
-    let pad = ((panel.width() - row_w) * 0.5).max(0.0);
-    let row_y = panel.max.y - 26.0;
-    let back_rect = egui::Rect::from_min_size(
-        panel.min + egui::vec2(pad, row_y - panel.min.y),
-        egui::vec2(back_w, 24.0),
-    );
-    let next_rect = egui::Rect::from_min_size(
-        panel.min + egui::vec2(pad + back_w + 12.0, row_y - panel.min.y),
-        egui::vec2(next_w, 24.0),
-    );
+    let pad = ((ui.available_width() - back_w - 12.0 - next_w) * 0.5).max(0.0);
     ui.vertical_centered(|ui| match step {
         Step::Welcome => {
             load_logo(app, ui);
-            ui.heading("Iris game launcher");
+            ui.heading("Iris Game Launcher");
             let head = ui.style().text_styles[&egui::TextStyle::Heading].size;
             ui.label(
                 egui::RichText::new(env!("CARGO_PKG_VERSION").trim_end_matches(".0"))
@@ -366,23 +355,25 @@ pub fn render(app: &mut App, ui: &mut egui::Ui) {
         }
     });
 
-    // Draw the reserved row at the bottom strip: Back then Next/Finish,
-    // centered inside the strip. Back is inert on the first screen.
+    // Buttons live below the step content: spacer then Back then Next/Finish,
+    // all centered horizontally on the screen. Back is inert on the first
+    // screen.
+    ui.add_space(16.0);
     let first = app.onboarding.index() == 0;
-    let back_resp = ui.put(
-        back_rect,
-        egui::Button::new(egui::RichText::new(back_label)).min_size(egui::vec2(back_w, 24.0)),
-    );
-    let back = !first && back_resp.clicked();
-    let next_resp = ui.put(
-        next_rect,
-        egui::Button::new(egui::RichText::new(next_label)).min_size(egui::vec2(next_w, 24.0)),
-    );
-    if step == Step::Games {
-        finish = next_resp.clicked();
-    } else {
-        next = next_resp.clicked();
-    }
+    let mut back = false;
+    ui.horizontal(|ui| {
+        ui.add_space(pad);
+        let resp = ui.add(
+            egui::Button::new(egui::RichText::new(back_label.clone()))
+                .min_size(egui::vec2(back_w, 24.0)),
+        );
+        back = !first && resp.clicked();
+        if step == Step::Games {
+            finish = ui.button(next_label.clone()).clicked();
+        } else {
+            next = ui.button(next_label.clone()).clicked();
+        }
+    });
 
     // Wizard actions run after the drawing closure so app can be borrowed
     // mutably for the handler/login/proton work.

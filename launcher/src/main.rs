@@ -5999,7 +5999,7 @@ impl eframe::App for App {
                 let title = if settings {
                     tr(&self.config, "settings")
                 } else {
-                    "Iris game launcher".to_string()
+                    "Iris Game Launcher".to_string()
                 };
                 ui.heading(title);
                 // Version right after the title text: small font, inline in
