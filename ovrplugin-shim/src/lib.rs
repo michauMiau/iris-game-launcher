@@ -12,7 +12,7 @@ static INITIALIZED: AtomicBool = AtomicBool::new(false);
 /// Build label emitted as the first trace line so logs self-identify which
 /// shim build produced them (assets/ovrplugin-shim.dll is rebuilt from this
 /// repo's sources; the label here is the source of truth, then git tag).
-pub const SHIM_BUILD_LABEL: &str = "ovrplugin-shim 0.1.22-abi";
+pub const SHIM_BUILD_LABEL: &str = "ovrplugin-shim 0.1.23-abi";
 
 /// Lazy bring-up: Unity's Oculus integration polls GetInitialized without
 /// ever calling Initialize on this plugin build (measured on Boneworks:
@@ -216,17 +216,18 @@ fn lazy_runtime_once() {
     if LAZY_TRIED.swap(true, std::sync::atomic::Ordering::Relaxed) {
         return;
     }
+    // Always run Revive/runtime bring-up off the caller thread: LoadLibrary and
+    // ovr_Initialize/ovr_Create can block on vrclient/SteamVR and must not stall
+    // Unity's GetInitialized poll (seen hanging with IRIS_OVR_SYNC_INIT).
     if sync_init_enabled() {
-        record("lazy-runtime: attempting LibOVRRT64_1.dll beside the exe (sync, IRIS_OVR_SYNC_INIT)");
-        let rc = compat_initialize();
-        record(&format!("lazy-runtime: compat_initialize rc {rc}"));
+        record("lazy-runtime: IRIS_OVR_SYNC_INIT requested but forcing threaded init to avoid blocking the game thread");
     } else {
         record("lazy-runtime: attempting LibOVRRT64_1.dll beside the exe (threaded)");
-        std::thread::spawn(|| {
-            let rc = compat_initialize();
-            record(&format!("lazy-runtime: compat_initialize rc {rc}"));
-        });
     }
+    std::thread::spawn(|| {
+        let rc = compat_initialize();
+        record(&format!("lazy-runtime: compat_initialize rc {rc}"));
+    });
 }
 
 pub fn compat_initialize() -> i32 {
