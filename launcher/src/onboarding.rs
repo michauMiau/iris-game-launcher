@@ -106,10 +106,14 @@ enum Action {
 
 pub fn render(app: &mut App, ui: &mut egui::Ui) {
     // Skip lives in the top-right corner, small and quiet: the wizard's own
-    // actions are the main focus, not skipping them.
+    // actions are the main focus, not skipping them. The layout fills only
+    // the row height (a plain with_layout would consume the whole panel and
+    // leave the wizard content off-screen).
     let mut skip = false;
-    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-        skip = ui.small_button(tr(&app.config, "onboard_skip")).clicked();
+    ui.horizontal(|ui| {
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            skip = ui.small_button(tr(&app.config, "onboard_skip")).clicked();
+        });
     });
 
     let step = app.onboarding.step;
