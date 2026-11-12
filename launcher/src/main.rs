@@ -1178,19 +1178,108 @@ const REVIVE_XR_BYTES: &[u8] = include_bytes!("../../assets/LibReviveXR64.dll");
 #[allow(dead_code)]
 const REVIVE_VR_BYTES: &[u8] = include_bytes!("../../assets/LibRevive64.dll");
 
-/// Replace Data/Plugins/OVRPlugin.dll with the ovrp shim: Unity Oculus
-/// plugin games load that file at boot and call its ovrp_* functions, and it
-/// cannot be intercepted any other way (the plugin statically links libovr
-/// and never loads LibOVRRT64_1.dll — proven by a complete +loaddll trace).
-/// The original is kept beside the file as OVRPlugin.dll.orig, and the shim
-/// bridges the plugin API into the Revive runtime we already place beside
-/// the exe. This must run on EVERY launch (see librevive_rt_step for why).
+/// Replace OVRPlugin.dll with the ovrp shim. Unity Oculus plugin games load
+/// it from `<*_Data>/Plugins/[x86_64|x86/]OVRPlugin.dll`; the plugin statically
+/// links libovr and never loads LibOVRRT64_1.dll, so the plugin DLL is the
+/// interception point. Other engines/layouts (e.g. Unreal) may place it
+/// elsewhere, so we also search for any file named `OVRPlugin.dll`
+/// (case-insensitive) under the game dir (bounded depth) and replace all x64
+/// matches. Original kept as OVRPlugin.dll.orig beside each file. Must run on
+/// every launch (idempotent).
 fn ovrplugin_shim_step(game_dir: &Path) -> Option<PathBuf> {
     const SHIM_BYTES: &[u8] = include_bytes!("../../assets/ovrplugin-shim.dll");
     if !game_dir.is_dir() {
         return None;
     }
-    let mut target: Option<PathBuf> = None;
+
+    fn is_x64_dll(path: &Path) -> bool {
+        use std::io::{Read, Seek, SeekFrom};
+        let Ok(mut f) = std::fs::File::open(path) else {
+            return false;
+        };
+        let mut mz = [0u8; 2];
+        if f.read_exact(&mut mz).is_err() || &mz != b"MZ" {
+            return false;
+        }
+        if f.seek(SeekFrom::Start(0x3c)).is_err() {
+            return false;
+        }
+        let mut pe_off = [0u8; 4];
+        if f.read_exact(&mut pe_off).is_err() {
+            return false;
+        }
+        let pe_off = u32::from_le_bytes(pe_off) as u64;
+        if f.seek(SeekFrom::Start(pe_off)).is_err() {
+            return false;
+        }
+        let mut sig = [0u8; 4];
+        if f.read_exact(&mut sig).is_err() || &sig != b"PE\0\0" {
+            return false;
+        }
+        let mut machine = [0u8; 2];
+        if f.read_exact(&mut machine).is_err() {
+            return false;
+        }
+        u16::from_le_bytes(machine) == 0x8664
+    }
+
+    fn place(target: &Path, shim: &[u8]) -> bool {
+        if std::fs::read(target)
+            .map(|b| b.as_slice() == shim)
+            .unwrap_or(false)
+        {
+            return true;
+        }
+        if !is_x64_dll(target) {
+            auth::log_line(&format!(
+                "OVRPlugin shim skipped (not x64 PE): {}",
+                target.display()
+            ));
+            return false;
+        }
+        backup_beside(target, shim);
+        if std::fs::write(target, shim).is_ok() {
+            auth::log_line(&format!(
+                "OVRPlugin shim placed (original kept as {}.orig): {}",
+                target.display(),
+                target.display()
+            ));
+            true
+        } else {
+            auth::log_line(&format!(
+                "OVRPlugin shim could not be written: {}",
+                target.display()
+            ));
+            false
+        }
+    }
+
+    fn find_by_name(root: &Path, depth: usize, out: &mut Vec<PathBuf>) {
+        if depth == 0 {
+            return;
+        }
+        let Ok(rd) = std::fs::read_dir(root) else {
+            return;
+        };
+        let mut dirs = Vec::new();
+        for e in rd.filter_map(|x| x.ok()) {
+            let p = e.path();
+            let name = e.file_name().to_string_lossy().to_string();
+            if p.is_file() {
+                if name.eq_ignore_ascii_case("OVRPlugin.dll") {
+                    out.push(p);
+                }
+            } else if p.is_dir() {
+                dirs.push(p);
+            }
+        }
+        for d in dirs {
+            find_by_name(&d, depth - 1, out);
+        }
+    }
+
+    let mut targets: Vec<PathBuf> = Vec::new();
+    // Unity: <Game>/*_Data/Plugins/[x86_64|x86/]OVRPlugin.dll
     if let Ok(rd) = std::fs::read_dir(game_dir) {
         for e in rd.filter_map(|x| x.ok()) {
             let p = e.path();
@@ -1204,34 +1293,42 @@ fn ovrplugin_shim_step(game_dir: &Path) -> Option<PathBuf> {
             for cand in [
                 p.join("Plugins").join("OVRPlugin.dll"),
                 p.join("Plugins").join("x86_64").join("OVRPlugin.dll"),
+                p.join("Plugins").join("x86").join("OVRPlugin.dll"),
             ] {
                 if cand.is_file() {
-                    target = Some(cand);
-                    break;
+                    targets.push(cand);
                 }
-            }
-            if target.is_some() {
-                break;
             }
         }
     }
-    let target = target?;
-    if std::fs::read(&target)
-        .map(|b| b.as_slice() == SHIM_BYTES)
-        .unwrap_or(false)
-    {
-        return Some(target);
+    // Blind filename search for non-Unity/other layouts and extra copies.
+    let mut extra = Vec::new();
+    find_by_name(game_dir, 8, &mut extra);
+    for p in extra {
+        if !targets.iter().any(|t| t == &p) {
+            targets.push(p);
+        }
     }
-    backup_beside(&target, SHIM_BYTES);
-    if std::fs::write(&target, SHIM_BYTES).is_ok() {
-        auth::log_line(&format!(
-            "OVRPlugin shim placed (original kept as {}): {}",
-            target.display(),
-            target.display()
-        ));
-        Some(target)
-    } else {
+    targets.sort();
+    targets.dedup();
+
+    let mut first_ok: Option<PathBuf> = None;
+    let mut placed = 0usize;
+    for t in &targets {
+        if place(t, SHIM_BYTES) {
+            placed += 1;
+            if first_ok.is_none() {
+                first_ok = Some(t.clone());
+            }
+        }
+    }
+    if placed == 0 {
         None
+    } else {
+        if placed > 1 {
+            auth::log_line(&format!("OVRPlugin shim placed in {placed} locations"));
+        }
+        first_ok
     }
 }
 
@@ -2164,6 +2261,7 @@ fn capture_output(
     gfx_note: Slot<String>,
     running: std::sync::Arc<std::sync::atomic::AtomicBool>,
     trace_file: Option<PathBuf>,
+    clear_running_on_exit: bool,
 ) {
     // When a trace file is requested (IRIS_WINEDEBUG), drain output into the
     // file instead of the launcher log: a loaddll trace is tens of thousands
@@ -2253,7 +2351,6 @@ fn capture_output(
     let tag = label;
     std::thread::spawn(move || {
         let code = child.wait().ok().and_then(|st| exit_of(&st));
-        running.store(false, std::sync::atomic::Ordering::Relaxed);
         // Join the pipe threads before judging the flags: the child exits
         // instantly in tests and short crashes, and its last lines can still
         // be in a drain thread's buffer when wait returns. Judging early made
@@ -2274,6 +2371,12 @@ fn capture_output(
             },
             hint_dir.display()
         ));
+        // Proton/wrapper can exit while the real game keeps running; in that
+        // case liveness polling owns the running flag. For simple/direct runs
+        // and tests, clear on child exit.
+        if clear_running_on_exit {
+            running.store(false, std::sync::atomic::Ordering::Relaxed);
+        }
     });
 }
 
@@ -4650,12 +4753,18 @@ impl App {
                         }
                     }
                     if has_env_key(&g.launch_env, "PROTON_VR_RUNTIME") {
-                        if let Some(manifest) = steamxr_manifest(&root) {
-                            auth::log_line(&format!(
-                                "OpenXR runtime manifest pointed at {}",
-                                manifest.display()
-                            ));
-                            cmd.env("XR_RUNTIME_JSON", manifest);
+                        if std::env::var_os("XR_RUNTIME_JSON").is_none() {
+                            if let Some(manifest) = steamxr_manifest(&root) {
+                                auth::log_line(&format!(
+                                    "OpenXR runtime manifest pointed at {}",
+                                    manifest.display()
+                                ));
+                                cmd.env("XR_RUNTIME_JSON", manifest);
+                            }
+                        } else {
+                            auth::log_line(
+                                "XR_RUNTIME_JSON already set in environment; leaving it unchanged",
+                            );
                         }
                         if proton_vr_capable(&inner_bin) {
                             wine_vr_registry_gate(&prefix, &inner_bin);
@@ -4813,6 +4922,7 @@ impl App {
                         self.launch_slot.clone(),
                         self.running_flag.clone(),
                         trace_file,
+                        false,
                     );
                     self.status = format!(
                         "launched pid {} via {} (prefix {})",
@@ -4836,12 +4946,18 @@ impl App {
             let mut xr_json: Option<PathBuf> = None;
             if let Some(root) = &steamvr_root {
                 let vr = root.join(r"steamapps\common\SteamVR");
-                if let Some(m) = xr_manifest(&vr) {
-                    auth::log_line(&format!(
-                        "OpenXR runtime manifest pointed at {}",
-                        m.display()
-                    ));
-                    xr_json = Some(m);
+                if std::env::var_os("XR_RUNTIME_JSON").is_none() {
+                    if let Some(m) = xr_manifest(&vr) {
+                        auth::log_line(&format!(
+                            "OpenXR runtime manifest pointed at {}",
+                            m.display()
+                        ));
+                        xr_json = Some(m);
+                    }
+                } else {
+                    auth::log_line(
+                        "XR_RUNTIME_JSON already set in environment; leaving it unchanged",
+                    );
                 }
                 let xr_dll = self.data_root().join("LibReviveXR64.dll");
                 std::fs::write(&xr_dll, REVIVE_XR_BYTES).ok();
@@ -4965,6 +5081,7 @@ impl App {
                         self.launch_slot.clone(),
                         self.running_flag.clone(),
                         None,
+                        false,
                     );
                     self.status = if self.win_swap_landed == Some(false) {
                         format!("launched pid {pid}, runtime swap failed, see launcher.log")
@@ -5105,12 +5222,24 @@ impl App {
             if let Some(exe) = self.running_exe.clone() {
                 // The game process inside wine carries the exe path in its
                 // cmdline; the group signal misses it when Proton detached
-                // the session, so match the path directly.
+                // the session, so match the path and basename directly.
                 let _ = std::process::Command::new("pkill")
                     .arg(sig)
                     .arg("-f")
-                    .arg(exe)
+                    .arg(&exe)
                     .spawn();
+                if let Some(name) = std::path::Path::new(&exe)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                {
+                    if !name.is_empty() {
+                        let _ = std::process::Command::new("pkill")
+                            .arg(sig)
+                            .arg("-f")
+                            .arg(name)
+                            .spawn();
+                    }
+                }
             }
         }
         #[cfg(target_os = "windows")]
@@ -5149,14 +5278,41 @@ impl App {
             #[cfg(not(target_os = "windows"))]
             {
                 if !alive {
-                    let out = std::process::Command::new("pgrep")
-                        .arg("-f")
-                        .arg(&exe)
-                        .output();
-                    if let Ok(o) = out {
-                        if !String::from_utf8_lossy(&o.stdout).trim().is_empty() {
-                            alive = true;
+                    let mut pgrep_ok = false;
+                    let matches = |pat: &str, ok: &mut bool| -> bool {
+                        match std::process::Command::new("pgrep")
+                            .arg("-f")
+                            .arg(pat)
+                            .output()
+                        {
+                            Ok(o) => {
+                                *ok = true;
+                                !String::from_utf8_lossy(&o.stdout).trim().is_empty()
+                            }
+                            Err(_) => false,
                         }
+                    };
+                    alive = matches(&exe, &mut pgrep_ok);
+                    if !alive {
+                        if let Some(name) = std::path::Path::new(&exe)
+                            .file_name()
+                            .and_then(|n| n.to_str())
+                        {
+                            if !name.is_empty() {
+                                alive = matches(name, &mut pgrep_ok);
+                            }
+                        }
+                    }
+                    if !alive {
+                        if let Some(prefix) = self.running_prefix.as_ref() {
+                            alive = matches(&prefix.display().to_string(), &mut pgrep_ok);
+                        }
+                    }
+                    // If pgrep is unavailable we cannot prove a detached Proton/wine
+                    // game is gone once the wrapper pid has exited; keep running state
+                    // rather than falsely reporting "stopped" on every click.
+                    if !alive && !pgrep_ok && !pid_alive(pid) {
+                        alive = true;
                     }
                 }
             }
@@ -5298,6 +5454,7 @@ impl App {
                         self.launch_slot.clone(),
                         self.running_flag.clone(),
                         None,
+                        false,
                     );
                     self.status = format!(
                         "launched pid {} via {} (prefix {})",
@@ -5330,6 +5487,7 @@ impl App {
                         self.launch_slot.clone(),
                         self.running_flag.clone(),
                         None,
+                        false,
                     );
                     self.status = format!("launched pid {}", pid);
                 }

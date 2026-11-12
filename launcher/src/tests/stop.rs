@@ -45,6 +45,7 @@ fn running_flag_clears_when_the_process_ends() {
         slot.clone(),
         flag.clone(),
         None,
+        true,
     );
     for _ in 0..80 {
         std::thread::sleep(std::time::Duration::from_millis(50));

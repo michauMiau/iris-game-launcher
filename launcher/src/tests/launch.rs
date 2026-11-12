@@ -19,6 +19,7 @@ fn capture_output_flags_graphics_failure() {
         slot.clone(),
         std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         None,
+        true,
     );
     for _ in 0..160 {
         std::thread::sleep(std::time::Duration::from_millis(50));
@@ -53,6 +54,7 @@ fn capture_output_flags_prefix_version_mismatch() {
         slot.clone(),
         std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         None,
+        true,
     );
     for _ in 0..160 {
         std::thread::sleep(std::time::Duration::from_millis(50));
