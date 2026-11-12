@@ -12,7 +12,7 @@ static INITIALIZED: AtomicBool = AtomicBool::new(false);
 /// Build label emitted as the first trace line so logs self-identify which
 /// shim build produced them (assets/ovrplugin-shim.dll is rebuilt from this
 /// repo's sources; the label here is the source of truth, then git tag).
-pub const SHIM_BUILD_LABEL: &str = "ovrplugin-shim 0.1.27-abi";
+pub const SHIM_BUILD_LABEL: &str = "ovrplugin-shim 0.1.28-abi";
 
 /// Lazy bring-up: Unity's Oculus integration polls GetInitialized without
 /// ever calling Initialize on this plugin build (measured on Boneworks:
@@ -214,7 +214,15 @@ fn runtime_dll_path() -> Option<std::path::PathBuf> {
 }
 
 fn runtime_bringup_enabled() -> bool {
-    std::env::var("IRIS_OVR_ENABLE_RUNTIME")
+    // Runtime bring-up on by default (needed for VR session). Disable with
+    // IRIS_OVR_DISABLE_RUNTIME=1. Legacy IRIS_OVR_ENABLE_RUNTIME=1 still forces on.
+    if std::env::var("IRIS_OVR_ENABLE_RUNTIME")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+    {
+        return true;
+    }
+    !std::env::var("IRIS_OVR_DISABLE_RUNTIME")
         .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
         .unwrap_or(false)
 }
@@ -239,7 +247,7 @@ fn lazy_runtime_once() {
         return;
     }
     if !runtime_bringup_enabled() {
-        record("lazy-runtime: skipped (set IRIS_OVR_ENABLE_RUNTIME=1 to attempt Revive/runtime bring-up)");
+        record("lazy-runtime: skipped (IRIS_OVR_DISABLE_RUNTIME=1 set; runtime bring-up disabled)");
         return;
     }
     // Always run Revive/runtime bring-up off the caller thread: LoadLibrary and
@@ -248,7 +256,7 @@ fn lazy_runtime_once() {
     if sync_init_enabled() {
         record("lazy-runtime: IRIS_OVR_SYNC_INIT requested but forcing threaded init to avoid blocking the game thread");
     }
-    record(&format!("lazy-runtime: runtime bring-up enabled (backend={})", std::env::var("IRIS_OVR_RUNTIME_BACKEND").unwrap_or_else(|_| "auto".into())));
+    record(&format!("lazy-runtime: runtime bring-up starting (backend={}, disable with IRIS_OVR_DISABLE_RUNTIME=1)", std::env::var("IRIS_OVR_RUNTIME_BACKEND").unwrap_or_else(|_| "auto".into())));
     std::thread::spawn(|| {
         let rc = compat_initialize();
         record(&format!("lazy-runtime: compat_initialize rc {rc}"));

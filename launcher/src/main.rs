@@ -1068,17 +1068,22 @@ fn write_game_desktop_entry(game: &GameEntry, icon: Option<&Path>) {
         game.launch_exe.rsplit('/').next().unwrap_or(&game.launch_exe).trim_end_matches(".exe"),
         escaped,
     );
-    let dir = std::env::var("HOME")
-        .map(|h| {
-            PathBuf::from(h)
-                .join(".local")
-                .join("share")
-                .join("applications")
-        })
-        .unwrap_or_else(|_| PathBuf::from("/tmp"));
-    let _ = std::fs::create_dir_all(&dir);
-    let _ = std::fs::write(dir.join(format!(".iris-{}.desktop", game.name)), content);
-    auth::log_line(&format!("desktop entry registered for {}", game.name));
+    let dir = data_dir().join("desktop");
+    if std::fs::create_dir_all(&dir).is_err() {
+        return;
+    }
+    let path = dir.join(format!(".iris-{}.desktop", game.name));
+    match std::fs::write(&path, content) {
+        Ok(()) => auth::log_line(&format!(
+            "desktop entry registered for {}: {}",
+            game.name,
+            path.display()
+        )),
+        Err(e) => auth::log_line(&format!(
+            "desktop entry write failed for {}: {e}",
+            game.name
+        )),
+    }
 }
 
 fn game_prefix_root(prefix_dir: &str) -> std::path::PathBuf {
@@ -4899,46 +4904,75 @@ impl App {
             };
             cmd.stdout(std::process::Stdio::piped());
             cmd.stderr(std::process::Stdio::piped());
-            match cmd.spawn() {
-                Ok(child) => {
-                    let via = if use_proton { "Proton" } else { "wine" };
-                    let pid = child.id();
-                    self.running_pid = Some(pid);
-                    self.running_prefix = Some(prefix.clone());
-                    self.running_exe = Some(exe.to_string_lossy().into_owned());
-                    self.running_flag =
-                        std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
-                    auth::log_line(&format!(
-                        "launch: pid {} via {} prefix {} exe {}",
-                        pid,
-                        via,
-                        prefix.display(),
-                        exe.display()
-                    ));
-                    capture_output(
-                        child,
-                        format!("{} via {}", g.name, via),
-                        prefix.clone(),
-                        self.launch_slot.clone(),
-                        self.running_flag.clone(),
-                        trace_file,
-                        false,
-                    );
-                    self.status = format!(
-                        "launched pid {} via {} (prefix {})",
-                        pid,
-                        via,
-                        prefix.display()
-                    );
-                    if std::env::var("WAYLAND_DISPLAY").is_ok() {
-                        auth::log_line("launch: running under a Wayland session");
+            let runner = inner_bin.clone();
+            if !exe.is_file() {
+                let msg = format!("launch failed: game exe not found: {}", exe.display());
+                auth::log_line(&msg);
+                self.status = msg;
+            } else if (use_proton
+                || !proton_script.is_empty()
+                || !self.config.wine_binary.trim().is_empty())
+                && !runner.is_file()
+            {
+                let msg = format!(
+                    "launch failed: Proton/Wine runtime not found: {} (check Settings → Proton runtime or Launch options)",
+                    runner.display()
+                );
+                auth::log_line(&format!("{msg} — exe {}", exe.display()));
+                self.status = msg;
+            } else {
+                match cmd.spawn() {
+                    Ok(child) => {
+                        let via = if use_proton { "Proton" } else { "wine" };
+                        let pid = child.id();
+                        self.running_pid = Some(pid);
+                        self.running_prefix = Some(prefix.clone());
+                        self.running_exe = Some(exe.to_string_lossy().into_owned());
+                        self.running_flag =
+                            std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+                        auth::log_line(&format!(
+                            "launch: pid {} via {} prefix {} exe {}",
+                            pid,
+                            via,
+                            prefix.display(),
+                            exe.display()
+                        ));
+                        capture_output(
+                            child,
+                            format!("{} via {}", g.name, via),
+                            prefix.clone(),
+                            self.launch_slot.clone(),
+                            self.running_flag.clone(),
+                            trace_file,
+                            false,
+                        );
+                        self.status = format!(
+                            "launched pid {} via {} (prefix {})",
+                            pid,
+                            via,
+                            prefix.display()
+                        );
+                        if std::env::var("WAYLAND_DISPLAY").is_ok() {
+                            auth::log_line("launch: running under a Wayland session");
+                        }
                     }
-                }
-                Err(e) => {
-                    auth::log_line(&format!("launch failed: {e} — exe {}", exe.display()));
-                    self.status = format!("launch failed: {e}");
-                }
-            };
+                    Err(e) => {
+                        let kind = if !exe.is_file() {
+                            "game exe not found"
+                        } else if !runner.is_file() {
+                            "Proton/Wine runtime not found"
+                        } else {
+                            "could not start process"
+                        };
+                        auth::log_line(&format!(
+                            "launch failed: {kind}: {e} — exe {} (runner {})",
+                            exe.display(),
+                            runner.display()
+                        ));
+                        self.status = format!("launch failed: {kind}: {e}");
+                    }
+                };
+            }
         }
         #[cfg(target_os = "windows")]
         {
@@ -5141,9 +5175,7 @@ impl App {
                 self.tweak_env = env.join("\n");
             }
             Preset::Env(key) => {
-                if key == "IRIS_OVR_FAKE_INIT" {
-                    // Experiment knob: the plugin shim reports initialized
-                    // without a created session (see ovrplugin-shim trace).
+                if key == "IRIS_OVR_FAKE_INIT" || key == "IRIS_OVR_DISABLE_RUNTIME" {
                     let mut env = env_lines(&self.tweak_env);
                     if !toggle_env_entry(&mut env, key, "1", on) {
                         return;
@@ -5151,27 +5183,35 @@ impl App {
                     self.tweak_env = env.join("\n");
                     return;
                 }
-                let dir = self.store.apps.get(idx).and_then(|g| {
-                    if g.install_dir.is_empty() {
-                        None
-                    } else {
-                        Some(g.install_dir.clone())
+                if key == "OVR_SHIM_LOG" {
+                    let dir = self.store.apps.get(idx).and_then(|g| {
+                        if g.install_dir.is_empty() {
+                            None
+                        } else {
+                            Some(g.install_dir.clone())
+                        }
+                    });
+                    let Some(dir) = dir else {
+                        self.status = "game folder not known — install the game first".into();
+                        return;
+                    };
+                    let value = format!("{}/iris-shim-trace.log", dir.trim_end_matches('/'));
+                    let mut env = env_lines(&self.tweak_env);
+                    if !toggle_env_entry(&mut env, key, &value, on) {
+                        return;
                     }
-                });
-                let Some(dir) = dir else {
-                    self.status = "game folder not known — install the game first".into();
-                    return;
-                };
-                let value = format!("{}/iris-shim-trace.log", dir.trim_end_matches('/'));
-                let mut env = env_lines(&self.tweak_env);
-                if !toggle_env_entry(&mut env, key, &value, on) {
+                    // Same switch also gives the OVR plugin shim its own trace
+                    // directory (its distinct iris-ovrplugin-trace.log lives
+                    // there). The user can override IRIS_OVR_TRACE_DIR in the
+                    // launch tweaks afterward.
+                    toggle_env_entry(&mut env, "IRIS_OVR_TRACE_DIR", &dir, on);
+                    self.tweak_env = env.join("\n");
                     return;
                 }
-                // Same switch also gives the OVR plugin shim its own trace
-                // directory (its distinct iris-ovrplugin-trace.log lives
-                // there). The user can override IRIS_OVR_TRACE_DIR in the
-                // launch tweaks afterward.
-                toggle_env_entry(&mut env, "IRIS_OVR_TRACE_DIR", &dir, on);
+                let mut env = env_lines(&self.tweak_env);
+                if !toggle_env_entry(&mut env, key, "1", on) {
+                    return;
+                }
                 self.tweak_env = env.join("\n");
             }
         }
@@ -5427,43 +5467,56 @@ impl App {
             }
             cmd.stdout(std::process::Stdio::piped());
             cmd.stderr(std::process::Stdio::piped());
-            match cmd.spawn() {
-                Ok(child) => {
-                    let pid = child.id();
-                    self.running_pid = Some(pid);
-                    self.running_prefix = Some(prefix.clone());
-                    self.running_exe = Some(exe.to_string_lossy().into_owned());
-                    self.running_flag =
-                        std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
-                    let via = if !proton_script.is_empty() {
-                        "Proton"
-                    } else {
-                        "wine"
-                    };
-                    auth::log_line(&format!(
-                        "custom run: pid {} via {} prefix {} exe {}",
-                        pid,
-                        via,
-                        prefix.display(),
-                        exe.display()
-                    ));
-                    capture_output(
-                        child,
-                        format!("{} custom exe via {}", g.name, via),
-                        prefix.clone(),
-                        self.launch_slot.clone(),
-                        self.running_flag.clone(),
-                        None,
-                        false,
-                    );
-                    self.status = format!(
-                        "launched pid {} via {} (prefix {})",
-                        pid,
-                        via,
-                        prefix.display()
-                    );
+            if !inner_bin.is_file() {
+                let msg = format!(
+                    "launch failed: Proton/Wine runtime not found: {}",
+                    inner_bin.display()
+                );
+                auth::log_line(&msg);
+                self.status = msg;
+            } else if !exe.is_file() {
+                let msg = format!("launch failed: exe not found: {}", exe.display());
+                auth::log_line(&msg);
+                self.status = msg;
+            } else {
+                match cmd.spawn() {
+                    Ok(child) => {
+                        let pid = child.id();
+                        self.running_pid = Some(pid);
+                        self.running_prefix = Some(prefix.clone());
+                        self.running_exe = Some(exe.to_string_lossy().into_owned());
+                        self.running_flag =
+                            std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+                        let via = if !proton_script.is_empty() {
+                            "Proton"
+                        } else {
+                            "wine"
+                        };
+                        auth::log_line(&format!(
+                            "custom run: pid {} via {} prefix {} exe {}",
+                            pid,
+                            via,
+                            prefix.display(),
+                            exe.display()
+                        ));
+                        capture_output(
+                            child,
+                            format!("{} custom exe via {}", g.name, via),
+                            prefix.clone(),
+                            self.launch_slot.clone(),
+                            self.running_flag.clone(),
+                            None,
+                            false,
+                        );
+                        self.status = format!(
+                            "launched pid {} via {} (prefix {})",
+                            pid,
+                            via,
+                            prefix.display()
+                        );
+                    }
+                    Err(e) => self.status = format!("launch failed: {e}"),
                 }
-                Err(e) => self.status = format!("launch failed: {e}"),
             }
         }
         #[cfg(target_os = "windows")]
@@ -5962,7 +6015,7 @@ impl App {
             });
         });
         ui.separator();
-        // Controls: channel/check/update on the left, Play/Reinstall on the right.
+        // Controls: Play/Reinstall on the left, channel/check/update on the right.
         ui.horizontal(|ui| {
             let has_token = !self.session.token.is_empty();
             if !g.branches.is_empty() {
@@ -5984,62 +6037,83 @@ impl App {
                         }
                     });
             }
-            let update_desc = self.update_available();
-            let update_btn = if let Some(ref desc) = update_desc {
-                format!("Update: {desc}")
-            } else if self.ch_inflight {
-                "Checking updates…".to_string()
-            } else {
-                tr(&self.config, "check_updates")
-            };
-            ui.add_enabled_ui(has_token && !self.ch_inflight && !self.dl_busy(idx), |ui| {
-                let resp = ui.add(egui::Button::new(update_btn).min_size(egui::vec2(170.0, 34.0)));
-                if resp.clicked() {
-                    if update_desc.is_some() {
-                        self.open_install();
-                    } else {
-                        self.list_channels();
-                    }
+
+            if self.running_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                if ui
+                    .add(
+                        egui::Button::new(tr(&self.config, "running"))
+                            .min_size(egui::vec2(120.0, 34.0)),
+                    )
+                    .clicked()
+                {
+                    self.stop_ask = Some(true);
                 }
-                if update_desc.is_none() && !g.branches.is_empty() && !self.ch_inflight {
-                    resp.on_hover_text(tr(&self.config, "update_none"));
+            } else {
+                ui.add_enabled_ui(installed && !(self.dl_busy(idx)), |ui| {
+                    if ui
+                        .add(
+                            egui::Button::new(tr(&self.config, "play"))
+                                .min_size(egui::vec2(120.0, 34.0)),
+                        )
+                        .clicked()
+                    {
+                        self.launch();
+                    }
+                });
+            }
+            ui.add_enabled_ui(self.installable(idx), |ui| {
+                if ui
+                    .add(
+                        egui::Button::new(if installed { "Reinstall" } else { "Install" })
+                            .min_size(egui::vec2(120.0, 34.0)),
+                    )
+                    .clicked()
+                {
+                    self.open_install();
                 }
             });
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.add_enabled_ui(self.installable(idx), |ui| {
-                    if ui
-                        .add(
-                            egui::Button::new(if installed { "Reinstall" } else { "Install" })
-                                .min_size(egui::vec2(120.0, 34.0)),
-                        )
-                        .clicked()
-                    {
-                        self.open_install();
+                let update_desc = self.update_available();
+                let update_btn = if let Some(ref desc) = update_desc {
+                    format!("Update: {desc}")
+                } else if self.ch_inflight {
+                    "Checking updates…".to_string()
+                } else {
+                    tr(&self.config, "check_updates")
+                };
+                ui.add_enabled_ui(has_token && !self.ch_inflight && !self.dl_busy(idx), |ui| {
+                    let resp =
+                        ui.add(egui::Button::new(update_btn).min_size(egui::vec2(170.0, 34.0)));
+                    if resp.clicked() {
+                        if update_desc.is_some() {
+                            self.open_install();
+                        } else {
+                            self.list_channels();
+                        }
+                    }
+                    if update_desc.is_none() && !g.branches.is_empty() && !self.ch_inflight {
+                        resp.on_hover_text(tr(&self.config, "update_none"));
                     }
                 });
-                if self.running_flag.load(std::sync::atomic::Ordering::Relaxed) {
-                    if ui
-                        .add(
-                            egui::Button::new(tr(&self.config, "running"))
-                                .min_size(egui::vec2(120.0, 34.0)),
-                        )
-                        .clicked()
-                    {
-                        self.stop_ask = Some(true);
+                if !g.branches.is_empty() {
+                    if self.selected_branch >= g.branches.len() {
+                        self.selected_branch = 0;
                     }
-                } else {
-                    ui.add_enabled_ui(installed && !(self.dl_busy(idx)), |ui| {
-                        if ui
-                            .add(
-                                egui::Button::new(tr(&self.config, "play"))
-                                    .min_size(egui::vec2(120.0, 34.0)),
-                            )
-                            .clicked()
-                        {
-                            self.launch();
-                        }
-                    });
+                    let selected_text = g
+                        .branches
+                        .get(self.selected_branch)
+                        .map(|b| format!("{} {}", b.name, b.version))
+                        .unwrap_or_default();
+                    egui::ComboBox::from_id_salt(("release_channel", idx))
+                        .selected_text(selected_text)
+                        .show_ui(ui, |ui| {
+                            for (i, b) in g.branches.iter().enumerate() {
+                                let label = format!("{} {}", b.name, b.version);
+                                ui.selectable_value(&mut self.selected_branch, i, label);
+                            }
+                        });
+                    ui.label(tr(&self.config, "channel_label"));
                 }
             });
         });
@@ -6954,8 +7028,8 @@ impl eframe::App for App {
                     // its follow-up plugin calls in the trace.
                     ("Fake plugin init", Preset::Env("IRIS_OVR_FAKE_INIT")),
                     (
-                        "OVR runtime bridge (experimental)",
-                        Preset::Env("IRIS_OVR_ENABLE_RUNTIME"),
+                        "Disable VR runtime bring-up (Oculus plugin)",
+                        Preset::Env("IRIS_OVR_DISABLE_RUNTIME"),
                     ),
                 ];
                 #[cfg(not(target_os = "windows"))]
@@ -6990,12 +7064,14 @@ impl eframe::App for App {
                     let _ = changed;
                     ui.horizontal(|ui| {
                         ui.label(label);
-                        if ui.radio(on, tr(&self.config, "preset_on")).clicked() && !on {
-                            self.apply_preset(idx, preset, item, true);
-                        }
-                        if ui.radio(!on, tr(&self.config, "preset_off")).clicked() && on {
-                            self.apply_preset(idx, preset, item, false);
-                        }
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui.radio(!on, tr(&self.config, "preset_off")).clicked() && on {
+                                self.apply_preset(idx, preset, item, false);
+                            }
+                            if ui.radio(on, tr(&self.config, "preset_on")).clicked() && !on {
+                                self.apply_preset(idx, preset, item, true);
+                            }
+                        });
                     });
                 }
                 ui.horizontal(|ui| {
