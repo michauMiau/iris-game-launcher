@@ -238,4 +238,192 @@ fn runtime_dll_candidates() -> Vec<String> {
     }
 }
 
-fn lazy_runtime_once()
+fn lazy_runtime_once() {
+    if LAZY_TRIED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+        return;
+    }
+    if !runtime_bringup_enabled() {
+        record("lazy-runtime: skipped (IRIS_OVR_DISABLE_RUNTIME=1 set; runtime bring-up disabled)");
+        return;
+    }
+    // Always run Revive/runtime bring-up off the caller thread: LoadLibrary and
+    // ovr_Initialize/ovr_Create can block on vrclient/SteamVR and must not stall
+    // Unity's GetInitialized poll.
+    if sync_init_enabled() {
+        record("lazy-runtime: IRIS_OVR_SYNC_INIT requested but forcing threaded init to avoid blocking the game thread");
+    }
+    record(&format!("lazy-runtime: runtime bring-up starting (backend={}, disable with IRIS_OVR_DISABLE_RUNTIME=1)", std::env::var("IRIS_OVR_RUNTIME_BACKEND").unwrap_or_else(|_| "auto".into())));
+    std::thread::spawn(|| {
+        let rc = compat_initialize();
+        record(&format!("lazy-runtime: compat_initialize rc {rc}"));
+    });
+}
+
+
+fn exe_dir_wide() -> Option<Vec<u16>> {
+    let mut buf = vec![0u16; 32768];
+    let len = unsafe { GetModuleFileNameW(0, buf.as_mut_ptr(), buf.len() as u32) } as usize;
+    if len == 0 || len >= buf.len() {
+        return None;
+    }
+    buf.truncate(len);
+    while let Some(&c) = buf.last() {
+        if c == b'\\' as u16 || c == b'/' as u16 {
+            buf.pop();
+            break;
+        }
+        buf.pop();
+    }
+    if buf.is_empty() { None } else { Some(buf) }
+}
+
+fn try_load_runtime_dll(dll: &str) -> isize {
+    let module = unsafe {
+        let name: Vec<u16> = format!("{dll}\0").encode_utf16().collect();
+        LoadLibraryW(name.as_ptr())
+    };
+    if module != 0 {
+        record(&format!("compat_initialize: loaded {dll} by name -> {module:#x}"));
+        return module;
+    }
+    let err = unsafe { GetLastError() };
+    record(&format!("compat_initialize: {dll} not loaded by name (GetLastError={err})"));
+    if let Some(mut dir) = exe_dir_wide() {
+        let dir_str = String::from_utf16_lossy(&dir);
+        dir.push(b'\\' as u16);
+        dir.extend(format!("{dll}").encode_utf16());
+        dir.push(0);
+        let module = unsafe { LoadLibraryW(dir.as_ptr()) };
+        if module != 0 {
+            record(&format!("compat_initialize: loaded {dll} from exe dir {dir_str} -> {module:#x}"));
+            return module;
+        }
+        let err2 = unsafe { GetLastError() };
+        record(&format!("compat_initialize: {dll} not loaded from exe dir {dir_str} (GetLastError={err2})"));
+    } else {
+        record(&format!("compat_initialize: could not resolve exe dir for {dll}"));
+    }
+    0
+}
+
+pub fn compat_initialize() -> i32 {
+    if RUNTIME.get().is_some() {
+        INITIALIZED.store(true, Ordering::Relaxed);
+        return 0;
+    }
+    let mut last_rc = -1003;
+    for dll in runtime_dll_candidates() {
+        record(&format!("lazy-runtime: loading {dll}"));
+        let module = try_load_runtime_dll(&dll);
+        if module == 0 {
+            last_rc = -1003;
+            continue;
+        }
+        let raw_init = unsafe {
+            GetProcAddress(module, b"ovr_Initialize\0".as_ptr() as *const c_char)
+        };
+        let raw_create = unsafe {
+            GetProcAddress(module, b"ovr_Create\0".as_ptr() as *const c_char)
+        };
+        if raw_init.is_null() || raw_create.is_null() {
+            let err = unsafe { GetLastError() };
+            record(&format!("compat_initialize: {dll} missing ovr_Initialize or ovr_Create (GetLastError={err})"));
+            unsafe { let _ = FreeLibrary(module); }
+            last_rc = -1003;
+            continue;
+        }
+        let ovr_initialize: FnOvrInitialize = unsafe { std::mem::transmute(raw_init) };
+        let ovr_create: FnOvrCreate = unsafe { std::mem::transmute(raw_create) };
+        record(&format!("compat_initialize: calling ovr_Initialize ({dll})"));
+        let init_rc = unsafe { ovr_initialize(std::ptr::null()) };
+        record(&format!("compat_initialize: ovr_Initialize rc {init_rc} ({dll})"));
+        if init_rc != 0 {
+            unsafe { let _ = FreeLibrary(module); }
+            last_rc = -1003;
+            continue;
+        }
+        let mut session: *mut c_void = std::ptr::null_mut();
+        let mut hmd: *mut c_void = std::ptr::null_mut();
+        record(&format!("compat_initialize: calling ovr_Create ({dll})"));
+        let create_rc = unsafe { ovr_create(&mut session, &mut hmd) };
+        record(&format!("compat_initialize: ovr_Create rc {create_rc} session_is_null={} ({dll})", session.is_null()));
+        if create_rc != 0 || session.is_null() {
+            unsafe { let _ = FreeLibrary(module); }
+            last_rc = -1000;
+            continue;
+        }
+        record(&format!("compat_initialize: session created ({dll})"));
+        let _ = RUNTIME.set(Runtime { _module: module, session });
+        INITIALIZED.store(true, Ordering::Relaxed);
+        return 0;
+    }
+    last_rc
+}
+
+// ---- init-path stubs with real descriptors ----
+//
+// Unity 2018.4's OVRPlugin wrapper rejects the plugin (and logs
+// "Security error. Oculus plugin is invalid!") when early calls return
+// zeros or nulls, then crashes dereferencing a null somewhere in
+// UnityPlayer. The HMD/Eye getters below return the fixed values the
+// pre-init path probes, sized for a Quest-2-class device. Extra probe
+// calls are traced once each so the trace names the exact rejection
+// point.
+//
+// HmdDesc (Quest 2 class): { resolution 1832x1920, pos 0, fov 0.92/1.22 }
+// EyeDesc  (per eye):      { texture 1832x1920, FOV from HmdDesc }
+// Sizes are legible in the trace; bump PROBE_FOV if apps mis-size.
+
+#[allow(non_camel_case_types)]
+#[repr(C)]
+pub struct HmdDesc {
+    pub resolution_w: u32,
+    pub resolution_h: u32,
+    pub pos_x: f32,
+    pub pos_y: f32,
+    pub pos_z: f32,
+    pub fov_x: f32,
+    pub fov_y: f32,
+    pub texture_size_w: u32,
+    pub texture_size_h: u32,
+}
+
+#[allow(non_camel_case_types)]
+#[repr(C)]
+pub struct EyeDesc {
+    pub resolution_w: u32,
+    pub resolution_h: u32,
+    pub fov_left: f32,
+    pub fov_right: f32,
+    pub fov_up: f32,
+    pub fov_down: f32,
+}
+
+pub fn get_hmd_desc(out: *mut HmdDesc) -> i32 {
+    record("get_hmd_desc (zeroed)");
+    if out.is_null() { return 0; }
+    unsafe {
+        std::ptr::write(out, HmdDesc {
+            resolution_w: 1832,
+            resolution_h: 1920,
+            pos_x: 0.0, pos_y: 0.0, pos_z: 0.0,
+            fov_x: 0.920, fov_y: 1.220,
+            texture_size_w: 1832,
+            texture_size_h: 1920,
+        });
+    }
+    1
+}
+
+pub fn get_eye_desc(out: *mut EyeDesc) -> i32 {
+    record("get_eye_desc (zeroed)");
+    if out.is_null() { return 0; }
+    unsafe {
+        std::ptr::write(out, EyeDesc {
+            resolution_w: 1832,
+            resolution_h: 1920,
+            fov_left: 0.460, fov_right: 0.460, fov_up: 0.610, fov_down: 0.610,
+        });
+    }
+    1
+}
