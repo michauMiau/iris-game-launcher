@@ -9,7 +9,7 @@ static INITIALIZED: AtomicBool = AtomicBool::new(false);
 /// Build label emitted as the first trace line so logs self-identify which
 /// shim build produced them (assets/ovrplugin-shim.dll is rebuilt from this
 /// repo's sources; the label here is the source of truth, then git tag).
-pub const SHIM_BUILD_LABEL: &str = "ovrplugin-shim 0.1.28-abi";
+pub const SHIM_BUILD_LABEL: &str = "ovrplugin-shim 0.1.29-abi";
 
 /// Lazy bring-up: Unity's Oculus integration polls GetInitialized without
 /// ever calling Initialize on this plugin build (measured on Boneworks:

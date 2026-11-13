@@ -1385,7 +1385,8 @@ fn librevive_rt_step(game_dir: &Path, proton: Option<&std::path::Path>) -> Optio
     // the plugin; replacing only LibOVRRT64_1.dll left that import path pointing
     // at the real Oculus runtime, which finds no Oculus service under Wine and
     // disables the headset plugin ("Security error. Oculus plugin is invalid").
-    // Both names get the Revive replacement, originals backed up once.
+    // Both names get the OpenVR-backed Revive replacement (kept for compatibility
+    // with direct LibOVR consumers), originals backed up once.
     let targets: Vec<PathBuf> = ["LibOVRRT64_1.dll", "LibOVR.dll"]
         .iter()
         .map(|name| game_dir.join(name))
@@ -1404,6 +1405,24 @@ fn librevive_rt_step(game_dir: &Path, proton: Option<&std::path::Path>) -> Optio
         }
         if std::fs::write(&target, REVIVE_VR_BYTES).is_ok() {
             landed = Some(target);
+        }
+    }
+    // The OVRPlugin shim's runtime bring-up (auto) tries LibReviveXR64.dll first,
+    // then falls back to LibOVRRT64_1.dll. Place the OpenXR-backed Revive DLL so
+    // the shim can prefer it on Proton+SteamVR (XR_RUNTIME_JSON) instead of
+    // crashing in the OpenVR-backed path when OpenVR client deps are incomplete.
+    let xr = game_dir.join("LibReviveXR64.dll");
+    if std::fs::read(&xr)
+        .map(|b| b.as_slice() == REVIVE_XR_BYTES)
+        .unwrap_or(false)
+    {
+        // already up to date
+    } else {
+        if xr.is_file() {
+            backup_beside(&xr, REVIVE_XR_BYTES);
+        }
+        if std::fs::write(&xr, REVIVE_XR_BYTES).is_ok() {
+            auth::log_line(&format!("revive XR runtime placed as {}", xr.display()));
         }
     }
     landed
