@@ -1407,10 +1407,10 @@ fn librevive_rt_step(game_dir: &Path, proton: Option<&std::path::Path>) -> Optio
             landed = Some(target);
         }
     }
-    // The OVRPlugin shim's runtime bring-up (auto) tries LibReviveXR64.dll first,
-    // then falls back to LibOVRRT64_1.dll. Place the OpenXR-backed Revive DLL so
-    // the shim can prefer it on Proton+SteamVR (XR_RUNTIME_JSON) instead of
-    // crashing in the OpenVR-backed path when OpenVR client deps are incomplete.
+    // The OVRPlugin shim's runtime bring-up (auto) can try either Revive backend
+    // depending on environment/overrides (default: OpenVR-backed first, then OpenXR).
+    // Place the OpenXR-backed Revive DLL (LibReviveXR64.dll) beside the exe so it is
+    // available as an alternative/fallback to the OpenVR-backed LibOVRRT64_1.dll.
     let xr = game_dir.join("LibReviveXR64.dll");
     if std::fs::read(&xr)
         .map(|b| b.as_slice() == REVIVE_XR_BYTES)

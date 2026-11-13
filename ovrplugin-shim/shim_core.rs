@@ -9,7 +9,7 @@ static INITIALIZED: AtomicBool = AtomicBool::new(false);
 /// Build label emitted as the first trace line so logs self-identify which
 /// shim build produced them (assets/ovrplugin-shim.dll is rebuilt from this
 /// repo's sources; the label here is the source of truth, then git tag).
-pub const SHIM_BUILD_LABEL: &str = "ovrplugin-shim 0.1.29-abi";
+pub const SHIM_BUILD_LABEL: &str = "ovrplugin-shim 0.1.32-abi";
 
 /// Lazy bring-up: Unity's Oculus integration polls GetInitialized without
 /// ever calling Initialize on this plugin build (measured on Boneworks:
@@ -225,7 +225,24 @@ fn runtime_dll_candidates() -> Vec<String> {
     match backend.to_ascii_lowercase().as_str() {
         "xr" | "openxr" => vec!["LibReviveXR64.dll".into()],
         "vr" | "openvr" => vec!["LibOVRRT64_1.dll".into()],
-        _ => vec!["LibReviveXR64.dll".into(), "LibOVRRT64_1.dll".into()],
+        _ => {
+            // Default for Oculus-plugin titles (e.g. Boneworks): choose Revive
+            // backend by environment. If XR_RUNTIME_JSON is set (launcher wires an
+            // OpenXR manifest, e.g. SteamVR OpenXR on Proton), try OpenXR-backed
+            // Revive first (LibReviveXR64.dll) and fall back to OpenVR-backed Revive
+            // (LibOVRRT64_1.dll), because LibRevive64/OpenVR ovr_Initialize has been
+            // observed to crash (AV) in that Proton+SteamVR setup. Without
+            // XR_RUNTIME_JSON, prefer OpenVR-backed Revive first and fall back to
+            // OpenXR. Override with IRIS_OVR_RUNTIME_BACKEND=vr|xr or IRIS_OVR_RUNTIME_DLL.
+            let xr_runtime = std::env::var("XR_RUNTIME_JSON")
+                .map(|v| !v.trim().is_empty())
+                .unwrap_or(false);
+            if xr_runtime {
+                vec!["LibReviveXR64.dll".into(), "LibOVRRT64_1.dll".into()]
+            } else {
+                vec!["LibOVRRT64_1.dll".into(), "LibReviveXR64.dll".into()]
+            }
+        }
     }
 }
 
