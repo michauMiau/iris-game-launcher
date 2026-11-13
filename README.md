@@ -19,7 +19,7 @@ Play all your bought games on Linux and Windows.
 ## Is this project SLOP?
 
 While this project has been *vibecoded* (and I'm not proud of it), care has been taken to ensure this project is free of bugs, problems and regressions. 
-This App has been rigorously tested by me, and I'm confident of its quality.
+This app has been rigorously tested by me, and I'm (mostly) confident of its quality.
 
 This project has been made entirely using local, open-weight models run entirely on my own lackluster hardware (RTX 4070, 32 GB DDR4, not a 4x DGX Spark cluster). 
 No Claude or ChatGPT here.
