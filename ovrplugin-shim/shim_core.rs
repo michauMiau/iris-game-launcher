@@ -9,7 +9,7 @@ static INITIALIZED: AtomicBool = AtomicBool::new(false);
 /// Build label emitted as the first trace line so logs self-identify which
 /// shim build produced them (assets/ovrplugin-shim.dll is rebuilt from this
 /// repo's sources; the label here is the source of truth, then git tag).
-pub const SHIM_BUILD_LABEL: &str = "ovrplugin-shim 0.1.32-abi";
+pub const SHIM_BUILD_LABEL: &str = "ovrplugin-shim 0.1.34-abi";
 
 /// Lazy bring-up: Unity's Oculus integration polls GetInitialized without
 /// ever calling Initialize on this plugin build (measured on Boneworks:
@@ -170,6 +170,7 @@ extern "system" {
     fn GetProcAddress(module: isize, procedure: *const c_char) -> *mut c_void;
     fn FreeLibrary(module: isize) -> i32;
     fn GetLastError() -> u32;
+    fn GetModuleFileNameW(module: isize, filename: *mut u16, size: u32) -> u32;
 }
 
 /// Loads the Revive runtime positioned beside the game exe as
@@ -226,171 +227,15 @@ fn runtime_dll_candidates() -> Vec<String> {
         "xr" | "openxr" => vec!["LibReviveXR64.dll".into()],
         "vr" | "openvr" => vec!["LibOVRRT64_1.dll".into()],
         _ => {
-            // Default for Oculus-plugin titles (e.g. Boneworks): choose Revive
-            // backend by environment. If XR_RUNTIME_JSON is set (launcher wires an
-            // OpenXR manifest, e.g. SteamVR OpenXR on Proton), try OpenXR-backed
-            // Revive first (LibReviveXR64.dll) and fall back to OpenVR-backed Revive
-            // (LibOVRRT64_1.dll), because LibRevive64/OpenVR ovr_Initialize has been
-            // observed to crash (AV) in that Proton+SteamVR setup. Without
-            // XR_RUNTIME_JSON, prefer OpenVR-backed Revive first and fall back to
-            // OpenXR. Override with IRIS_OVR_RUNTIME_BACKEND=vr|xr or IRIS_OVR_RUNTIME_DLL.
-            let xr_runtime = std::env::var("XR_RUNTIME_JSON")
-                .map(|v| !v.trim().is_empty())
-                .unwrap_or(false);
-            if xr_runtime {
-                vec!["LibReviveXR64.dll".into(), "LibOVRRT64_1.dll".into()]
-            } else {
-                vec!["LibOVRRT64_1.dll".into(), "LibReviveXR64.dll".into()]
-            }
+            // Auto: prefer OpenXR-backed Revive (LibReviveXR64.dll). Vendored
+            // LibRevive64/OpenVR (LibOVRRT64_1.dll) has been observed to AV-crash
+            // inside ovr_Initialize under Proton/SteamVR (e.g. Boneworks), and an
+            // in-process crash cannot be recovered as a fallback. Force OpenVR
+            // explicitly with IRIS_OVR_RUNTIME_BACKEND=vr or
+            // IRIS_OVR_RUNTIME_DLL=LibOVRRT64_1.dll only for targeted testing.
+            vec!["LibReviveXR64.dll".into()]
         }
     }
 }
 
-fn lazy_runtime_once() {
-    if LAZY_TRIED.swap(true, std::sync::atomic::Ordering::Relaxed) {
-        return;
-    }
-    if !runtime_bringup_enabled() {
-        record("lazy-runtime: skipped (IRIS_OVR_DISABLE_RUNTIME=1 set; runtime bring-up disabled)");
-        return;
-    }
-    // Always run Revive/runtime bring-up off the caller thread: LoadLibrary and
-    // ovr_Initialize/ovr_Create can block on vrclient/SteamVR and must not stall
-    // Unity's GetInitialized poll.
-    if sync_init_enabled() {
-        record("lazy-runtime: IRIS_OVR_SYNC_INIT requested but forcing threaded init to avoid blocking the game thread");
-    }
-    record(&format!("lazy-runtime: runtime bring-up starting (backend={}, disable with IRIS_OVR_DISABLE_RUNTIME=1)", std::env::var("IRIS_OVR_RUNTIME_BACKEND").unwrap_or_else(|_| "auto".into())));
-    std::thread::spawn(|| {
-        let rc = compat_initialize();
-        record(&format!("lazy-runtime: compat_initialize rc {rc}"));
-    });
-}
-
-pub fn compat_initialize() -> i32 {
-    if RUNTIME.get().is_some() {
-        INITIALIZED.store(true, Ordering::Relaxed);
-        return 0;
-    }
-    let mut last_rc = -1003;
-    for dll in runtime_dll_candidates() {
-        record(&format!("lazy-runtime: loading {dll}"));
-        let module = unsafe {
-            let name: Vec<u16> = format!("{dll}\0").encode_utf16().collect();
-            LoadLibraryW(name.as_ptr())
-        };
-        if module == 0 {
-            let err = unsafe { GetLastError() };
-            record(&format!("compat_initialize: {dll} not found/load failed (GetLastError={err})"));
-            last_rc = -1003;
-            continue;
-        }
-        record(&format!("compat_initialize: module loaded {dll} {module:#x}"));
-        let raw_init = unsafe {
-            GetProcAddress(module, b"ovr_Initialize\0".as_ptr() as *const c_char)
-        };
-        let raw_create = unsafe {
-            GetProcAddress(module, b"ovr_Create\0".as_ptr() as *const c_char)
-        };
-        if raw_init.is_null() || raw_create.is_null() {
-            let err = unsafe { GetLastError() };
-            record(&format!("compat_initialize: {dll} missing ovr_Initialize or ovr_Create (GetLastError={err})"));
-            unsafe { let _ = FreeLibrary(module); }
-            last_rc = -1003;
-            continue;
-        }
-        let ovr_initialize: FnOvrInitialize = unsafe { std::mem::transmute(raw_init) };
-        let ovr_create: FnOvrCreate = unsafe { std::mem::transmute(raw_create) };
-        record(&format!("compat_initialize: calling ovr_Initialize ({dll})"));
-        let init_rc = unsafe { ovr_initialize(std::ptr::null()) };
-        record(&format!("compat_initialize: ovr_Initialize rc {init_rc} ({dll})"));
-        if init_rc != 0 {
-            unsafe { let _ = FreeLibrary(module); }
-            last_rc = -1003;
-            continue;
-        }
-        let mut session: *mut c_void = std::ptr::null_mut();
-        let mut hmd: *mut c_void = std::ptr::null_mut();
-        record(&format!("compat_initialize: calling ovr_Create ({dll})"));
-        let create_rc = unsafe { ovr_create(&mut session, &mut hmd) };
-        record(&format!("compat_initialize: ovr_Create rc {create_rc} session_is_null={} ({dll})", session.is_null()));
-        if create_rc != 0 || session.is_null() {
-            unsafe { let _ = FreeLibrary(module); }
-            last_rc = -1000;
-            continue;
-        }
-        record(&format!("compat_initialize: session created ({dll})"));
-        let _ = RUNTIME.set(Runtime { _module: module, session });
-        INITIALIZED.store(true, Ordering::Relaxed);
-        return 0;
-    }
-    last_rc
-}
-
-// ---- init-path stubs with real descriptors ----
-//
-// Unity 2018.4's OVRPlugin wrapper rejects the plugin (and logs
-// "Security error. Oculus plugin is invalid!") when early calls return
-// zeros or nulls, then crashes dereferencing a null somewhere in
-// UnityPlayer. The HMD/Eye getters below return the fixed values the
-// pre-init path probes, sized for a Quest-2-class device. Extra probe
-// calls are traced once each so the trace names the exact rejection
-// point.
-//
-// HmdDesc (Quest 2 class): { resolution 1832x1920, pos 0, fov 0.92/1.22 }
-// EyeDesc  (per eye):      { texture 1832x1920, FOV from HmdDesc }
-// Sizes are legible in the trace; bump PROBE_FOV if apps mis-size.
-
-#[allow(non_camel_case_types)]
-#[repr(C)]
-pub struct HmdDesc {
-    pub resolution_w: u32,
-    pub resolution_h: u32,
-    pub pos_x: f32,
-    pub pos_y: f32,
-    pub pos_z: f32,
-    pub fov_x: f32,
-    pub fov_y: f32,
-    pub texture_size_w: u32,
-    pub texture_size_h: u32,
-}
-
-#[allow(non_camel_case_types)]
-#[repr(C)]
-pub struct EyeDesc {
-    pub resolution_w: u32,
-    pub resolution_h: u32,
-    pub fov_left: f32,
-    pub fov_right: f32,
-    pub fov_up: f32,
-    pub fov_down: f32,
-}
-
-pub fn get_hmd_desc(out: *mut HmdDesc) -> i32 {
-    record("get_hmd_desc (zeroed)");
-    if out.is_null() { return 0; }
-    unsafe {
-        std::ptr::write(out, HmdDesc {
-            resolution_w: 1832,
-            resolution_h: 1920,
-            pos_x: 0.0, pos_y: 0.0, pos_z: 0.0,
-            fov_x: 0.920, fov_y: 1.220,
-            texture_size_w: 1832,
-            texture_size_h: 1920,
-        });
-    }
-    1
-}
-
-pub fn get_eye_desc(out: *mut EyeDesc) -> i32 {
-    record("get_eye_desc (zeroed)");
-    if out.is_null() { return 0; }
-    unsafe {
-        std::ptr::write(out, EyeDesc {
-            resolution_w: 1832,
-            resolution_h: 1920,
-            fov_left: 0.460, fov_right: 0.460, fov_up: 0.610, fov_down: 0.610,
-        });
-    }
-    1
-}
+fn lazy_runtime_once()
