@@ -1343,20 +1343,11 @@ fn ovrplugin_shim_step(game_dir: &Path) -> Option<PathBuf> {
                     continue;
                 }
                 let xr = dir.join("LibReviveXR64.dll");
-                if xr.is_file() {
-                    if std::fs::read(&xr)
-                        .map(|b| b.as_slice() == REVIVE_XR_BYTES)
-                        .unwrap_or(false)
-                    {
-                        continue;
-                    }
-                    // keep existing file as .orig once via backup_beside when different
-                }
-                if !xr.exists()
-                    || !std::fs::read(&xr)
-                        .map(|b| b.as_slice() == REVIVE_XR_BYTES)
-                        .unwrap_or(false)
-                {
+                let needs_write = match std::fs::read(&xr) {
+                    Ok(b) => b.as_slice() != REVIVE_XR_BYTES,
+                    Err(_) => true,
+                };
+                if needs_write {
                     if xr.is_file() {
                         backup_beside(&xr, REVIVE_XR_BYTES);
                     }
@@ -4836,24 +4827,14 @@ impl App {
                             }
                         } else {
                             // SteamVR ships .desktop handlers for vrserver; the
-                            // launcher never spawns vrserver itself. Pipes default
-                            // to ~/.config/SteamVR when started outside Steam, and
-                            // VR_RUNTIME_DIR below points the game at that dir.
+                            // launcher never spawns vrserver itself.
                             auth::log_line("vrserver not running — start SteamVR via its desktop handler, then launch the game");
                         }
-                        // Valve issue #962: the game's vrclient needs
-                        // VR_RUNTIME_DIR to reach a vrserver it did not spawn
-                        // through Steam. Steam's container keeps its own pipe
-                        // dir hidden, so ss-discovered paths are forwarded when
-                        // visible and ~/.config/SteamVR is the pinned default.
-                        // SteamVR Linux escapes pressure-vessel (vrsetup.sh does the
-                        // setcap dance outside the container), so vrserver's pipes
-                        // live on the host and an outside app reaches them through
-                        // SteamVR's default pipe dir, the same way Vivecraft does.
-                        // Pinning a dir the server never used caused the
-                        // XR_ERROR_RUNTIME_UNAVAILABLE mismatch, so the launcher
-                        // only forwards VR_RUNTIME_DIR when the live vrserver
-                        // advertises a visible one and otherwise leaves it unset.
+                        // Forward VR_RUNTIME_DIR only when a real pipe directory is
+                        // advertised/discovered from the live vrserver. On Linux
+                        // SteamVR often uses abstract AF_UNIX sockets (no filesystem
+                        // pipe path like /tmp/steamvr), so guessing a directory can
+                        // break connection — leave it unset unless known.
                         let from_server =
                             vr_runtime_dir_from_server_env().or_else(vr_runtime_dir_discovered);
                         match &from_server {
@@ -4865,22 +4846,13 @@ impl App {
                                 ));
                             }
                             None => {
-                                // Steam hands its VR apps VR_RUNTIME_DIR=/tmp;
-                                // a vrserver started without an advertised dir
-                                // uses that same documented default, so an
-                                // outside game must ask for it explicitly or
-                                // vrclient probes a dir it never used.
-                                cmd.env("VR_RUNTIME_DIR", "/tmp");
-                                let pipe_dir = std::path::Path::new("/tmp/steamvr");
-                                auth::log_line(&format!(
-                                    "VR_RUNTIME_DIR set to /tmp (Steam's documented default); pipe dir {} {}",
-                                    pipe_dir.display(),
-                                    if pipe_dir.exists() {
-                                        "exists — vrserver's pipes are here"
-                                    } else {
-                                        "missing — vrserver binds abstract sockets instead"
-                                    }
-                                ));
+                                // Do not guess a filesystem pipe dir: SteamVR on Linux commonly
+                                // uses abstract AF_UNIX sockets (no /tmp/steamvr path). Only
+                                // forward VR_RUNTIME_DIR when a real directory was discovered
+                                // from the live vrserver or socket paths.
+                                auth::log_line(
+                                    "VR_RUNTIME_DIR not set: no pipe directory advertised or discovered from vrserver (SteamVR on Linux uses abstract sockets, not /tmp/steamvr)",
+                                );
                             }
                         }
                         // With the runtime live Unity renders to the VR compositor,
@@ -6047,10 +6019,16 @@ impl App {
                 if ach.is_empty() {
                     ui.label(tr(&self.config, "achievements_note"));
                 } else {
+                    ui.label(format!(
+                        "{} {}",
+                        tr(&self.config, "achievements_unlocked_label"),
+                        ach.len()
+                    ));
+                    ui.label(tr(&self.config, "achievements_locked_unknown"));
                     for a in &ach {
-                        let mut line = a.id.clone();
+                        let mut line = format!("✓ {}", a.id);
                         if !a.name.is_empty() {
-                            line = format!("{} — {}", line, a.name);
+                            line = format!("✓ {} — {}", a.id, a.name);
                         }
                         if !a.icon.is_empty() {
                             line = format!("{} [{}]", line, a.icon);
@@ -6070,25 +6048,6 @@ impl App {
         // Controls: Play/Reinstall on the left, channel/check/update on the right.
         ui.horizontal(|ui| {
             let has_token = !self.session.token.is_empty();
-            if !g.branches.is_empty() {
-                ui.label(tr(&self.config, "channel_label"));
-                if self.selected_branch >= g.branches.len() {
-                    self.selected_branch = 0;
-                }
-                let selected_text = g
-                    .branches
-                    .get(self.selected_branch)
-                    .map(|b| format!("{} {}", b.name, b.version))
-                    .unwrap_or_default();
-                egui::ComboBox::from_id_salt(("release_channel", idx))
-                    .selected_text(selected_text)
-                    .show_ui(ui, |ui| {
-                        for (i, b) in g.branches.iter().enumerate() {
-                            let label = format!("{} {}", b.name, b.version);
-                            ui.selectable_value(&mut self.selected_branch, i, label);
-                        }
-                    });
-            }
 
             if self.running_flag.load(std::sync::atomic::Ordering::Relaxed) {
                 if ui
