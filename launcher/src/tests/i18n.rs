@@ -94,3 +94,71 @@ fn used_static_keys() -> Vec<String> {
     }
     keys
 }
+
+/// Keys assembled at runtime from a prefix: the theme menu formats
+/// `theme_{th}` and the language menu formats `lang_{code}`, so the tables
+/// hold one entry per suffix while the code only ever names the prefix. A
+/// table key counts as used when production code mentions the literal, or
+/// when it starts with one of these dynamically formatted prefixes.
+const DYNAMIC_KEY_PREFIXES: &[&str] = &["theme_", "lang_"];
+
+/// Production UI code: `src/*.rs` minus `i18n.rs` (it `include!`s the tables,
+/// so every key would otherwise look used) and minus the `tests/` tree (tests
+/// exercise lookups; they are not call sites).
+fn production_sources() -> String {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut src = String::new();
+    for entry in std::fs::read_dir(&root).expect("src dir") {
+        let path = entry.expect("src entry").path();
+        if path.extension().and_then(|e| e.to_str()) != Some("rs") {
+            continue;
+        }
+        if path.file_name().and_then(|n| n.to_str()) == Some("i18n.rs") {
+            continue;
+        }
+        src.push_str(&std::fs::read_to_string(&path).expect("source"));
+        src.push('\n');
+    }
+    src
+}
+
+fn used_keys() -> std::collections::HashSet<String> {
+    let src = production_sources();
+    let dynamic: Vec<&str> = DYNAMIC_KEY_PREFIXES
+        .iter()
+        .copied()
+        .filter(|p| src.contains(&format!("\"{p}{{")))
+        .collect();
+    let mut used = std::collections::HashSet::new();
+    for table in all_tables() {
+        for (key, _) in table.1 {
+            if src.contains(&format!("\"{key}\"")) || dynamic.iter().any(|p| key.starts_with(p)) {
+                used.insert(key.to_string());
+            }
+        }
+    }
+    used
+}
+
+/// Every shipped language table. Adding a language means adding it here too,
+/// so the orphan check covers it.
+fn all_tables() -> Vec<(&'static str, &'static [(&'static str, &'static str)])> {
+    vec![("en", EN), ("pl", PL)]
+}
+
+#[test]
+fn no_language_table_entry_is_orphaned() {
+    let used = used_keys();
+    for (label, table) in all_tables() {
+        let orphans: Vec<&str> = table
+            .iter()
+            .filter(|(key, _)| !used.contains(*key))
+            .map(|(key, _)| *key)
+            .collect();
+        assert!(
+            orphans.is_empty(),
+            "{label} translation entries never referenced by code: {:?}",
+            orphans
+        );
+    }
+}

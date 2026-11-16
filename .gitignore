@@ -5,3 +5,6 @@ target-release/
 dist/
 __pycache__/
 *.AppImage
+ovrplugin-shim/probe/*.exe
+ovrplugin-shim/probe/*.dll
+ovrplugin-shim/probe/*.log

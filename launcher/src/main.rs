@@ -5784,12 +5784,12 @@ impl App {
                         if ui
                             .button(if installed {
                                 if newer {
-                                    "Update"
+                                    "Update".to_string()
                                 } else {
-                                    "Reinstall"
+                                    tr(&self.config, "reinstall")
                                 }
                             } else {
-                                "Install"
+                                tr(&self.config, "install")
                             })
                             .clicked()
                         {
@@ -6075,7 +6075,11 @@ impl App {
             ui.add_enabled_ui(self.installable(idx), |ui| {
                 if ui
                     .add(
-                        egui::Button::new(if installed { "Reinstall" } else { "Install" })
+                        egui::Button::new(if installed {
+                            tr(&self.config, "reinstall")
+                        } else {
+                            tr(&self.config, "install")
+                        })
                             .min_size(egui::vec2(120.0, 34.0)),
                     )
                     .clicked()
