@@ -95,6 +95,7 @@ int main(void) {
     if (pes) printf("eye texture scale=%.2f\n", pes());
     if (pif) { long f = -1; long rc = pif(&f); printf("input focus rc=%ld value=%ld\n", rc, f); }
     if (pti) { double t = 0; long rc = pti(&t); printf("time rc=%ld value=%.3f\n", rc, t); }
+    Sleep(4000);
     printf("PROBE OK\n");
     return 0;
 }

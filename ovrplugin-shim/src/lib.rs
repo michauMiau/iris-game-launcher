@@ -450,6 +450,7 @@ pub struct OvrApi {
     pub get_tracker_count: Option<unsafe extern "C" fn(*mut c_void) -> u32>,
     pub get_version_string: Option<unsafe extern "C" fn() -> *const u8>,
     pub get_initialized: Option<unsafe extern "C" fn() -> i32>,
+    pub get_last_error_info: Option<unsafe extern "C" fn(*mut OvErrorInfo)>,
     pub destroy: Option<unsafe extern "C" fn(*mut c_void)>,
 }
 
@@ -662,6 +663,7 @@ fn load_api(module: isize) -> OvrApi {
         get_tracker_count: proc(module, "ovr_GetTrackerCount"),
         get_version_string: proc(module, "ovr_GetVersionString"),
         get_initialized: proc(module, "ovr_GetInitialized"),
+        get_last_error_info: proc(module, "ovr_GetLastErrorInfo"),
         destroy: proc(module, "ovr_Destroy"),
     }
 }
@@ -702,6 +704,21 @@ pub fn compat_initialize() -> i32 {
             "compat_initialize: ovr_Initialize rc {init_rc} ({dll})"
         ));
         if init_rc != 0 {
+            if let Some(f) = proc::<unsafe extern "C" fn(*mut OvErrorInfo)>(module, "ovr_GetLastErrorInfo")
+            {
+                let mut info = OvErrorInfo::default();
+                unsafe { f(&mut info) };
+                let end = info
+                    .error_string
+                    .iter()
+                    .position(|&c| c == 0)
+                    .unwrap_or(info.error_string.len());
+                let msg = String::from_utf8_lossy(&info.error_string[..end]).into_owned();
+                record(&format!(
+                    "compat_initialize: last error rc {} msg {msg}",
+                    info.result
+                ));
+            }
             unsafe {
                 let _ = FreeLibrary(module);
             }
