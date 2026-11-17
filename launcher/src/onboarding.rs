@@ -113,6 +113,15 @@ enum Action {
     SteamAddAll,
 }
 
+/// Descriptive paragraph: capped width so a long hint reads as a centered
+/// block instead of spanning the whole window.
+fn para(ui: &mut egui::Ui, text: &str) {
+    ui.scope(|ui| {
+        ui.set_max_width(620.0);
+        ui.label(text);
+    });
+}
+
 pub fn render(app: &mut App, ui: &mut egui::Ui) {
     // Skip is small, quiet and bare ("Skip"/"Pomiń"), in the top-right corner.
     // The counter shares the same row: push it right with a spacer instead of
@@ -155,9 +164,8 @@ pub fn render(app: &mut App, ui: &mut egui::Ui) {
     let mut action: Option<Action> = None;
     let mut next = false;
     let mut finish = false;
-    // Buttons live right below the step content (the middle of the screen),
-    // centered horizontally: a spacer inside the row places them at the
-    // middle, not anchored to the bottom strip.
+    let mut back = false;
+    let first = app.onboarding.index() == 0;
     let back_label = tr(&app.config, "onboard_back");
     let next_label = if step == Step::Games {
         tr(&app.config, "onboard_finish")
@@ -166,243 +174,257 @@ pub fn render(app: &mut App, ui: &mut egui::Ui) {
     };
     // Same width for Back and Next so they look identical; bold labels.
     let btn_w = back_label.chars().count().max(next_label.chars().count()) as f32 * 7.0 + 28.0;
-    let pad = ((ui.available_width() - (btn_w * 2.0 + 12.0)) * 0.5).max(0.0);
-    ui.vertical_centered(|ui| match step {
-        Step::Welcome => {
-            load_logo(app, ui);
-            // Logo and title are larger than the library heading: the first
-            // screen is the brand moment.
-            let head = ui.style().text_styles[&egui::TextStyle::Heading].size;
-            ui.label(
-                egui::RichText::new("Iris Game Launcher")
-                    .size(head * 1.5)
-                    .strong(),
-            );
-            ui.label(
-                egui::RichText::new(env!("CARGO_PKG_VERSION").trim_end_matches(".0"))
-                    .size(head * 0.55),
-            );
-            ui.label(tr(&app.config, "onboard_welcome_hint"));
-            let mut pick_lang: Option<String> = None;
-            let mut pick_theme: Option<String> = None;
-            // The language/theme row lives centered too: a horizontal layout
-            // would otherwise stretch across the whole panel and sit left.
-            // Row width is estimated from the current language label lengths.
-            let est = if app.config.lang == "pl" {
-                250.0
-            } else {
-                220.0
-            };
-            let row_pad = ((ui.available_width() - est) * 0.5).max(0.0);
-            ui.horizontal(|ui| {
-                ui.add_space(row_pad);
-                ui.label(tr(&app.config, "language"));
-                let cur_lang = tr(&app.config, &format!("lang_{}", app.config.lang));
-                ui.menu_button(cur_lang, |ui| {
-                    for code in ["en", "pl"] {
-                        if ui
-                            .button(tr(&app.config, &format!("lang_{code}")))
-                            .clicked()
+    // Content and navigation form one block, centered as a unit. egui's
+    // `vertical_centered` only centers horizontally, so the steps hugged the
+    // top; an Area pinned to the window centre carries the whole block.
+    egui::Area::new(egui::Id::new("onboarding"))
+        .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+        .show(ui.ctx(), |ui| {
+            ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
+                match step {
+                    Step::Welcome => {
+                        load_logo(app, ui);
+                        // Logo and title are larger than the library heading: the first
+                        // screen is the brand moment.
+                        let head = ui.style().text_styles[&egui::TextStyle::Heading].size;
+                        ui.label(
+                            egui::RichText::new("Iris Game Launcher")
+                                .size(head * 1.5)
+                                .strong(),
+                        );
+                        ui.label(
+                            egui::RichText::new(env!("CARGO_PKG_VERSION").trim_end_matches(".0"))
+                                .size(head * 0.55),
+                        );
+                        para(ui, &tr(&app.config, "onboard_welcome_hint"));
+                        let mut pick_lang: Option<String> = None;
+                        let mut pick_theme: Option<String> = None;
+                        // The language/theme row lives centered too: a horizontal layout
+                        // would otherwise stretch across the whole panel and sit left.
+                        // Row width is estimated from the current language label lengths.
+                        let est = if app.config.lang == "pl" {
+                            250.0
+                        } else {
+                            220.0
+                        };
+                        let row_pad = ((ui.available_width() - est) * 0.5).max(0.0);
+                        ui.horizontal(|ui| {
+                            ui.add_space(row_pad);
+                            ui.label(tr(&app.config, "language"));
+                            let cur_lang = tr(&app.config, &format!("lang_{}", app.config.lang));
+                            ui.menu_button(cur_lang, |ui| {
+                                for code in ["en", "pl"] {
+                                    if ui
+                                        .button(tr(&app.config, &format!("lang_{code}")))
+                                        .clicked()
+                                    {
+                                        pick_lang = Some(code.to_string());
+                                        ui.close_menu();
+                                    }
+                                }
+                            });
+                            ui.label(tr(&app.config, "theme"));
+                            let cur_theme = tr(&app.config, &format!("theme_{}", app.config.theme));
+                            ui.menu_button(cur_theme, |ui| {
+                                for th in ["dark", "light", "solarized"] {
+                                    if ui.button(tr(&app.config, &format!("theme_{th}"))).clicked()
+                                    {
+                                        pick_theme = Some(th.to_string());
+                                        ui.close_menu();
+                                    }
+                                }
+                            });
+                        });
+                        if let Some(lang) = pick_lang {
+                            app.config.lang = lang;
+                            app.save_config();
+                        }
+                        if let Some(theme) = pick_theme {
+                            app.config.theme = theme;
+                            app.save_config();
+                        }
+                    }
+                    Step::Handler => {
+                        ui.heading(tr(&app.config, "onboard_handler_head"));
+                        para(ui, &tr(&app.config, "onboard_handler_hint"));
+                        ui.horizontal(|ui| {
+                            ui.add_space((ui.available_width() - 240.0).max(0.0) * 0.5);
+                            #[cfg(target_os = "linux")]
+                            {
+                                let owner = crate::auth::handler_owner();
+                                let label = if owner == "other" {
+                                    tr(&app.config, "handler_repoint")
+                                } else {
+                                    tr(&app.config, "handler_set")
+                                };
+                                if owner != "launcher" && ui.button(label).clicked() {
+                                    action = Some(Action::SetHandler);
+                                }
+                            }
+                            #[cfg(target_os = "windows")]
+                            {
+                                let label = if crate::auth::handler_owner() == "launcher" {
+                                    tr(&app.config, "handler_give_back")
+                                } else {
+                                    tr(&app.config, "handler_take")
+                                };
+                                if ui.button(label).clicked() {
+                                    action = Some(Action::SetHandler);
+                                }
+                            }
+                        });
+                        #[cfg(any(target_os = "linux", target_os = "windows"))]
+                        ui.label(format!(
+                            "{}: {}",
+                            tr(&app.config, "login_link_handler_label"),
+                            crate::auth::handler_status(&app.config.lang)
+                        ));
+                        #[cfg(any(target_os = "linux", target_os = "windows"))]
+                        if crate::auth::handler_owner() != "official" {
+                            ui.label(
+                                egui::RichText::new(tr(&app.config, "handler_warning"))
+                                    .small()
+                                    .weak(),
+                            );
+                        }
+                    }
+                    Step::Login => {
+                        ui.heading(tr(&app.config, "onboard_login_head"));
+                        para(ui, &tr(&app.config, "onboard_login_hint"));
+                        let login = ui.button(tr(&app.config, "login_btn")).clicked();
+                        let check = ui.button(tr(&app.config, "check_login")).clicked();
+                        ui.add(
+                            egui::TextEdit::singleline(&mut app.callback_url)
+                                .hint_text(tr(&app.config, "login_link_hint"))
+                                .desired_width(320.0),
+                        );
+                        let apply = ui.button(tr(&app.config, "apply_btn")).clicked();
+                        ui.label(if app.session.token.is_empty() {
+                            tr(&app.config, "onboard_login_none")
+                        } else {
+                            tr(&app.config, "onboard_login_present")
+                        });
+                        if login {
+                            action = Some(Action::Login);
+                        }
+                        if check {
+                            action = Some(Action::CheckLogin);
+                        }
+                        if apply {
+                            action = Some(Action::ApplyCallback);
+                        }
+                    }
+                    Step::Runtime => {
+                        ui.heading(tr(&app.config, "onboard_runtime_head"));
+                        #[cfg(not(target_os = "windows"))]
                         {
-                            pick_lang = Some(code.to_string());
-                            ui.close_menu();
+                            para(ui, &tr(&app.config, "onboard_runtime_hint_linux"));
+                            let found = detect_protons(&app.config.proton_dirs);
+                            ui.label(format!(
+                                "{}: {}",
+                                tr(&app.config, "onboard_proton_found"),
+                                found.len()
+                            ));
+                            if found.is_empty() {
+                                ui.label(tr(&app.config, "no_proton_found"));
+                            }
+                            if ui
+                                .button(tr(&app.config, "choose_proton_version"))
+                                .clicked()
+                            {
+                                action = Some(Action::ChooseProton);
+                            }
+                            let cur = app.config.proton_selected.clone();
+                            let mut pick: Option<String> = None;
+                            let est: f32 = found
+                                .iter()
+                                .map(|p| crate::short_path(p).chars().count() as f32 * 7.0 + 34.0)
+                                .sum();
+                            ui.horizontal(|ui| {
+                                ui.add_space(((ui.available_width() - est) * 0.5).max(0.0));
+                                for p in &found {
+                                    if ui
+                                        .radio(!cur.is_empty() && cur == *p, crate::short_path(p))
+                                        .clicked()
+                                    {
+                                        pick = Some(p.clone());
+                                    }
+                                }
+                            });
+                            if let Some(p) = pick {
+                                app.config.proton_selected = p;
+                                app.save_config();
+                            }
                         }
-                    }
-                });
-                ui.label(tr(&app.config, "theme"));
-                let cur_theme = tr(&app.config, &format!("theme_{}", app.config.theme));
-                ui.menu_button(cur_theme, |ui| {
-                    for th in ["dark", "light", "solarized"] {
-                        if ui.button(tr(&app.config, &format!("theme_{th}"))).clicked() {
-                            pick_theme = Some(th.to_string());
-                            ui.close_menu();
-                        }
-                    }
-                });
-            });
-            if let Some(lang) = pick_lang {
-                app.config.lang = lang;
-                app.save_config();
-            }
-            if let Some(theme) = pick_theme {
-                app.config.theme = theme;
-                app.save_config();
-            }
-        }
-        Step::Handler => {
-            ui.heading(tr(&app.config, "onboard_handler_head"));
-            ui.label(tr(&app.config, "onboard_handler_hint"));
-            ui.horizontal(|ui| {
-                #[cfg(target_os = "linux")]
-                {
-                    let owner = crate::auth::handler_owner();
-                    let label = if owner == "other" {
-                        tr(&app.config, "handler_repoint")
-                    } else {
-                        tr(&app.config, "handler_set")
-                    };
-                    if owner != "launcher" && ui.button(label).clicked() {
-                        action = Some(Action::SetHandler);
-                    }
-                }
-                #[cfg(target_os = "windows")]
-                {
-                    let label = if crate::auth::handler_owner() == "launcher" {
-                        tr(&app.config, "handler_give_back")
-                    } else {
-                        tr(&app.config, "handler_take")
-                    };
-                    if ui.button(label).clicked() {
-                        action = Some(Action::SetHandler);
-                    }
-                }
-            });
-            #[cfg(any(target_os = "linux", target_os = "windows"))]
-            ui.label(format!(
-                "{}: {}",
-                tr(&app.config, "login_link_handler_label"),
-                crate::auth::handler_status(&app.config.lang)
-            ));
-            #[cfg(any(target_os = "linux", target_os = "windows"))]
-            if crate::auth::handler_owner() != "official" {
-                ui.label(
-                    egui::RichText::new(tr(&app.config, "handler_warning"))
-                        .small()
-                        .weak(),
-                );
-            }
-        }
-        Step::Login => {
-            ui.heading(tr(&app.config, "onboard_login_head"));
-            ui.label(tr(&app.config, "onboard_login_hint"));
-            let login = ui.button(tr(&app.config, "login_btn")).clicked();
-            let check = ui.button(tr(&app.config, "check_login")).clicked();
-            ui.add(
-                egui::TextEdit::singleline(&mut app.callback_url)
-                    .hint_text(tr(&app.config, "login_link_hint"))
-                    .desired_width(320.0),
-            );
-            let apply = ui.button(tr(&app.config, "apply_btn")).clicked();
-            ui.label(if app.session.token.is_empty() {
-                tr(&app.config, "onboard_login_none")
-            } else {
-                tr(&app.config, "onboard_login_present")
-            });
-            if login {
-                action = Some(Action::Login);
-            }
-            if check {
-                action = Some(Action::CheckLogin);
-            }
-            if apply {
-                action = Some(Action::ApplyCallback);
-            }
-        }
-        Step::Runtime => {
-            ui.heading(tr(&app.config, "onboard_runtime_head"));
-            #[cfg(not(target_os = "windows"))]
-            {
-                ui.label(tr(&app.config, "onboard_runtime_hint_linux"));
-                let found = detect_protons(&app.config.proton_dirs);
-                ui.label(format!(
-                    "{}: {}",
-                    tr(&app.config, "onboard_proton_found"),
-                    found.len()
-                ));
-                if found.is_empty() {
-                    ui.label(tr(&app.config, "no_proton_found"));
-                }
-                if ui
-                    .button(tr(&app.config, "choose_proton_version"))
-                    .clicked()
-                {
-                    action = Some(Action::ChooseProton);
-                }
-                let cur = app.config.proton_selected.clone();
-                let mut pick: Option<String> = None;
-                ui.horizontal(|ui| {
-                    for p in &found {
-                        if ui
-                            .radio(!cur.is_empty() && cur == *p, crate::short_path(p))
-                            .clicked()
+                        #[cfg(target_os = "windows")]
                         {
-                            pick = Some(p.clone());
+                            para(ui, &tr(&app.config, "onboard_runtime_hint_windows"));
+                            if ui
+                                .button(tr(&app.config, "onboard_revive_download"))
+                                .clicked()
+                            {
+                                action = Some(Action::DownloadRevive);
+                            }
+                            ui.add(
+                                egui::TextEdit::singleline(&mut app.config.revive_dll)
+                                    .hint_text("LibOVRRT DLL path (ReviveNext install)")
+                                    .desired_width(320.0),
+                            );
                         }
                     }
-                });
-                if let Some(p) = pick {
-                    app.config.proton_selected = p;
-                    app.save_config();
+                    Step::Games => {
+                        ui.heading(tr(&app.config, "onboard_games_head"));
+                        para(ui, &tr(&app.config, "onboard_games_hint"));
+                        let scan = ui.button(tr(&app.config, "onboard_scan_folders")).clicked();
+                        let import = ui.button(tr(&app.config, "import_game")).clicked();
+                        #[cfg(target_os = "linux")]
+                        {
+                            para(ui, &tr(&app.config, "onboard_steam_hint"));
+                            if ui
+                                .button(tr(&app.config, "onboard_steam_add_all"))
+                                .clicked()
+                            {
+                                action = Some(Action::SteamAddAll);
+                            }
+                        }
+                        ui.label(format!(
+                            "{}: {}",
+                            tr(&app.config, "library_count_label"),
+                            app.store.apps.len()
+                        ));
+                        if scan {
+                            action = Some(Action::ScanDirs);
+                        }
+                        if import {
+                            action = Some(Action::ImportFolder);
+                        }
+                    }
                 }
-            }
-            #[cfg(target_os = "windows")]
-            {
-                ui.label(tr(&app.config, "onboard_runtime_hint_windows"));
-                if ui
-                    .button(tr(&app.config, "onboard_revive_download"))
-                    .clicked()
-                {
-                    action = Some(Action::DownloadRevive);
-                }
-                ui.add(
-                    egui::TextEdit::singleline(&mut app.config.revive_dll)
-                        .hint_text("LibOVRRT DLL path (ReviveNext install)")
-                        .desired_width(320.0),
+            });
+        });
+    // Navigation sits at a fixed offset below the centre so it does not jump
+    // when a step's content is taller or shorter.
+    egui::Area::new(egui::Id::new("onboarding-nav"))
+        .anchor(egui::Align2::CENTER_CENTER, [0.0, 120.0])
+        .show(ui.ctx(), |ui| {
+            ui.horizontal(|ui| {
+                let resp = ui.add(
+                    egui::Button::new(egui::RichText::new(back_label.clone()).strong())
+                        .min_size(egui::vec2(btn_w, 26.0)),
                 );
-            }
-        }
-        Step::Games => {
-            ui.heading(tr(&app.config, "onboard_games_head"));
-            ui.label(tr(&app.config, "onboard_games_hint"));
-            let scan = ui.button(tr(&app.config, "onboard_scan_folders")).clicked();
-            let import = ui.button(tr(&app.config, "import_game")).clicked();
-            #[cfg(target_os = "linux")]
-            {
-                ui.label(tr(&app.config, "onboard_steam_hint"));
-                if ui
-                    .button(tr(&app.config, "onboard_steam_add_all"))
-                    .clicked()
-                {
-                    action = Some(Action::SteamAddAll);
+                back = !first && resp.clicked();
+                ui.add_space(12.0);
+                let resp = ui.add(
+                    egui::Button::new(egui::RichText::new(next_label.clone()).strong())
+                        .min_size(egui::vec2(btn_w, 26.0)),
+                );
+                if step == Step::Games {
+                    finish = resp.clicked();
+                } else {
+                    next = resp.clicked();
                 }
-            }
-            ui.label(format!(
-                "{}: {}",
-                tr(&app.config, "library_count_label"),
-                app.store.apps.len()
-            ));
-            if scan {
-                action = Some(Action::ScanDirs);
-            }
-            if import {
-                action = Some(Action::ImportFolder);
-            }
-        }
-    });
-
-    // Buttons live below the step content: spacer then Back then Next/Finish,
-    // all centered horizontally on the screen. Back is inert on the first
-    // screen.
-    ui.add_space(16.0);
-    let first = app.onboarding.index() == 0;
-    let mut back = false;
-    ui.horizontal(|ui| {
-        ui.add_space(pad);
-        let resp = ui.add(
-            egui::Button::new(egui::RichText::new(back_label.clone()).strong())
-                .min_size(egui::vec2(btn_w, 26.0)),
-        );
-        back = !first && resp.clicked();
-        let resp = ui.add(
-            egui::Button::new(egui::RichText::new(next_label.clone()).strong())
-                .min_size(egui::vec2(btn_w, 26.0)),
-        );
-        if step == Step::Games {
-            finish = resp.clicked();
-        } else {
-            next = resp.clicked();
-        }
-    });
+            });
+        });
 
     // Wizard actions run after the drawing closure so app can be borrowed
     // mutably for the handler/login/proton work.

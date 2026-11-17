@@ -6083,7 +6083,7 @@ impl App {
                         } else {
                             tr(&self.config, "install")
                         })
-                            .min_size(egui::vec2(120.0, 34.0)),
+                        .min_size(egui::vec2(120.0, 34.0)),
                     )
                     .clicked()
                 {
