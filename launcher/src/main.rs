@@ -400,6 +400,8 @@ struct App {
     running_exe: Option<String>,
     /// Confirm dialog before killing a running game.
     stop_ask: Option<bool>,
+    /// Confirm dialog before logging out (the token stays valid elsewhere).
+    logout_ask: bool,
     /// Game whose MelonLoader install should add the dll override option.
     melon_pending_idx: Option<usize>,
     /// Per-game Proton picker popup. Linux only, Proton is wine-side.
@@ -2181,7 +2183,7 @@ fn apply_disk_session(session: &mut Session, remembered: &mut Vec<u8>, path: &Pa
 
 /// Truthful signed-in state as (text, tone). Green requires BOTH a token in
 /// memory and a probe that verified it; verified alone used to survive
-/// Forget token. The old check/warning glyphs came out as empty squares in
+/// Log out. The old check/warning glyphs came out as empty squares in
 /// egui's bundled font, so the icon is painted by hand instead.
 fn marker(signed: bool, verified: bool, probe_inflight: bool) -> (&'static str, &'static str) {
     if verified && signed {
@@ -2828,6 +2830,7 @@ impl App {
             running_prefix: None,
             running_exe: None,
             stop_ask: None,
+            logout_ask: false,
             melon_pending_idx: None,
             #[cfg(not(target_os = "windows"))]
             game_proton_popup: None,
@@ -3177,11 +3180,11 @@ impl App {
         *self.probe_slot.lock().unwrap() = None;
         self.fetch_token = String::new();
         // Same rule as probe/redeem: a fetch in flight dies with the session,
-        // otherwise fetch_inflight sticks true forever after Forget token and
+        // otherwise fetch_inflight sticks true forever after Log out and
         // the refresh button refuses every later fetch.
         self.fetch_inflight = false;
         *self.fetch_result.lock().unwrap() = None;
-        // A redeem in flight must die with the session too: forgetting the
+        // A redeem in flight must die with the session too: logging out
         // token while the exchange runs would otherwise resurrect a green
         // "signed in" from the landed bearer and stick redeem_inflight true.
         self.redeem_inflight = false;
@@ -6696,8 +6699,8 @@ impl eframe::App for App {
                             if ui.button(tr(&self.config, "apply_btn")).clicked() {
                                 self.redeem_callback();
                             }
-                            if ui.button(tr(&self.config, "forget_token")).clicked() {
-                                self.clear_session();
+                            if ui.button(tr(&self.config, "logout")).clicked() {
+                                self.logout_ask = true;
                             }
                         });
                         ui.label(format!(
@@ -6934,6 +6937,27 @@ impl eframe::App for App {
                         }
                         if ui.button(tr(&self.config, "stop_cancel")).clicked() {
                             self.stop_ask = None;
+                        }
+                    });
+                });
+        }
+        // Logout dialog: clearing the token is local, so the game asks first
+        // and says plainly that a copied token still works elsewhere.
+        if self.logout_ask {
+            egui::Window::new(tr(&self.config, "logout_title"))
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .order(egui::Order::Foreground)
+                .show(ctx, |ui| {
+                    ui.label(tr(&self.config, "logout_warning"));
+                    ui.horizontal(|ui| {
+                        if ui.button(tr(&self.config, "logout_confirm")).clicked() {
+                            self.logout_ask = false;
+                            self.clear_session();
+                        }
+                        if ui.button(tr(&self.config, "cancel")).clicked() {
+                            self.logout_ask = false;
                         }
                     });
                 });

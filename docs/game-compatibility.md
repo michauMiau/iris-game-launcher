@@ -8,6 +8,6 @@
 
 ## Experimental
 
-| Title | Path | State |
-|---|---|---|
-| **Boneworks** (Unity Oculus "OculusXR") | OVRPlugin shim → LibRevive64 (OpenVR) → SteamVR under Proton | Launches to window; VR session/rendering not working yet. |
+| Title | State |
+|---|---|
+| **Boneworks** | Launches, but the headset view does not appear yet. Linux test pending; on Windows the game refuses to start (it checks the plugin's signature). |

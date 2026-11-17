@@ -35,7 +35,7 @@ No Claude or ChatGPT here.
 | Game    | Status |
 | :--------: | ------- |
 | BONELAB  | ✅ Leaderboards and achievements not implemented, Fusion broken |
-| BONEWORKS | ⚠️ Launches (Proton + SteamVR), VR session not working yet (OVRPlugin/Revive path experimental) |
+| BONEWORKS | ⚠️ Launches, but the headset view does not appear yet. Linux test pending; on Windows the game refuses to start. |
 | [See More](docs/game-compatibility.md) |
 
 ## License
