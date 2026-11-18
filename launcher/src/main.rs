@@ -7541,8 +7541,35 @@ impl eframe::App for App {
     }
 }
 
+fn print_help() {
+    println!("Iris Game Launcher {}", env!("CARGO_PKG_VERSION"));
+    println!();
+    println!("Usage: iris-launcher [option]");
+    println!();
+    println!("  --help                    print this list");
+    println!("  --launch <game name>      launch a game by name");
+    println!("  rescan                    re-scan the library folders");
+    println!("  --download <id> [folder]  download a store game by id");
+    println!("  --reset-prefix            delete all per-game Wine prefixes");
+    println!("  --install-handler         take over the login link");
+    println!("  --uninstall-handler       give the login link back");
+    println!("  login-url                 print the browser login URL");
+    println!("  --url <callback url>      apply a login callback link");
+    println!("  --har <file>              apply a login callback from a HAR export");
+    println!("  --settings-page           open on the settings page");
+    println!("  --safe                    software rendering + X11 (or IRIS_SAFE=1)");
+    println!("  --no-covers               grey cards instead of cover art (or IRIS_NO_COVERS=1)");
+    println!("  --x11                     force the X11 backend");
+    println!();
+    println!("See docs/cli.md for details.");
+}
+
 fn main() -> eframe::Result {
     let args: Vec<String> = std::env::args().collect();
+    if args.iter().any(|a| a == "--help" || a == "-h") {
+        print_help();
+        return Ok(());
+    }
     // Hidden --launch <name>: used by per-game .desktop entries created at
     // launch (see write_game_desktop_entry) so the game gets its own
     // taskbar/dock identity instead of the launcher's.

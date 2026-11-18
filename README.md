@@ -30,6 +30,12 @@ No Claude or ChatGPT here.
 - Linux: grab the AppImage from the [releases](https://github.com/michauMiau/iris-game-launcher/releases) page, `chmod +x IrisLauncher-x86_64.AppImage`, run it. Needs FUSE (or `--appimage-extract-and-run` if you don't have FUSE).
 - Windows: grab `IrisLauncher-win-x86_64.exe` from the [releases](https://github.com/michauMiau/iris-game-launcher/releases) page and run it.
 
+## Command line
+
+`iris-launcher --help` lists the options; the full list with notes lives in
+[docs/cli.md](docs/cli.md). Headless ones include `--launch <game>`, `rescan`,
+`--download <id>`, `--reset-prefix` and the login handlers.
+
 ## Game Compatibility
 
 | Game    | Status |
