@@ -1,5 +1,9 @@
 # Game compatibility
 
+Games that use OpenXR (like Bonelab) talk to SteamVR directly and work out of the box.
+Games that use the older Oculus plugin (like Boneworks) need the Oculus runtime, which
+the launcher replaces with its own translator — those are the tricky ones.
+
 ## Known working (verified)
 
 | Title | Notes |
