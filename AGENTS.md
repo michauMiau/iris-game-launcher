@@ -22,7 +22,7 @@ Headset PC binaries built against the vendor runtime talk to the platform API at
 The shim is a rebuilt `LibOVRPlatform64_1.dll` (`shim/`, export table copied from the genuine runtime, 1209 exports). It:
 
 - answers Unity's init wrappers as initialized,
-- queues the entitlement request and pops back a non-error message carrying the game's App Id, so viewer-entitlement checks pass with no network and no vendor service,
+- answers the entitlement request from the launcher's cached ownership. The official entitlements query verifies ownership online and games.json caches it, so verified games are granted from cache offline; imported or never-verified games get an offline fallback grant so they still boot. The launcher hands the shim the basis (IRIS_ENTITLEMENT=verified or fallback) and the trace records which one answered. No vendor service is needed,
 - returns empty strings and success codes from the probes games make (`Error_GetCode`, `Error_GetHttpCode`, `Message_GetRequestID`, the string getters),
 - keeps the PopMessage/FreeMessage poll loop cheap instead of answering thousands of null polls with logging.
 

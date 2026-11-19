@@ -110,8 +110,21 @@ fn init() {}
 
 static REQUEST_ID: AtomicU32 = AtomicU32::new(1);
 
+/// Entitlement basis the launcher hands over via IRIS_ENTITLEMENT: "verified"
+/// means the store confirmed ownership online and it is cached, "fallback"
+/// means an imported or never-verified game granted offline so it still boots.
+/// Absent env reads as fallback, so a standalone probe boots too. Both grant;
+/// the trace records which basis answered.
+fn entitlement_basis() -> &'static str {
+    match std::env::var("IRIS_ENTITLEMENT").as_deref() {
+        Ok("verified") => "verified",
+        _ => "fallback",
+    }
+}
+
 fn entitlement_request() -> u32 {
     let id = REQUEST_ID.fetch_add(1, Ordering::SeqCst);
+    record(&format!("entitlement granted: {} ownership", entitlement_basis()));
     let msg = Box::new(Msg {
         msg_type: MSG_ENTITLEMENT,
         is_error: false,

@@ -324,3 +324,45 @@ fn import_matches_a_folder_by_oculus_manifest_app_id() {
     assert!(app.status.contains("matched"), "status says matched");
     std::fs::remove_dir_all(root).ok();
 }
+
+#[test]
+fn entitlement_basis_verified_vs_fallback() {
+    assert_eq!(entitlement_basis(true), "verified");
+    assert_eq!(entitlement_basis(false), "fallback");
+}
+
+#[test]
+fn launch_env_stamps_entitlement_basis() {
+    let mut g = GameEntry {
+        description: String::new(),
+        app_id: "1".into(),
+        name: "Test".into(),
+        install_dir: "/games/test".into(),
+        launch_exe: "test.exe".into(),
+        version: "1.0".into(),
+        meta_app_id: "1".into(),
+        binary_id: String::new(),
+        cover_url: String::new(),
+        entitled: true,
+        last_played: 0,
+        partial: false,
+        version_code: 100,
+        branches: Vec::new(),
+        proton: String::new(),
+        launch_args: Vec::new(),
+        launch_env: vec!["TESTKEY=testval".into()],
+    };
+    let basis_of = |cmd: &std::process::Command| {
+        cmd.get_envs()
+            .find(|(k, _)| *k == std::ffi::OsStr::new("IRIS_ENTITLEMENT"))
+            .and_then(|(_, v)| v)
+            .map(|v| v.to_string_lossy().into_owned())
+    };
+    let mut cmd = std::process::Command::new("true");
+    apply_launch_tweak_env(&mut cmd, &g);
+    assert_eq!(basis_of(&cmd).as_deref(), Some("verified"));
+    g.entitled = false;
+    let mut cmd = std::process::Command::new("true");
+    apply_launch_tweak_env(&mut cmd, &g);
+    assert_eq!(basis_of(&cmd).as_deref(), Some("fallback"));
+}

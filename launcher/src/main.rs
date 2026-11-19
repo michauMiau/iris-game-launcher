@@ -1920,9 +1920,30 @@ fn wine_settings_plan(wine_binary: &str, proton: &str) -> Option<(String, Vec<St
     None
 }
 
+/// Entitlement basis handed to the platform shim: "verified" when the store
+/// confirmed ownership online and games.json caches it, "fallback" for an
+/// imported or never-verified game (offline grant so it still boots).
+fn entitlement_basis(entitled: bool) -> &'static str {
+    if entitled {
+        "verified"
+    } else {
+        "fallback"
+    }
+}
+
 /// Per-game launch knobs: extra args and NAME=value env vars, applied before
 /// the game executable is spawned.
 fn apply_launch_tweak_env(cmd: &mut std::process::Command, g: &GameEntry) {
+    let basis = entitlement_basis(g.entitled);
+    cmd.env("IRIS_ENTITLEMENT", basis);
+    auth::log_line(&format!(
+        "launch entitlement: {basis} ({})",
+        if g.entitled {
+            "cached store ownership"
+        } else {
+            "offline fallback, unverified import"
+        }
+    ));
     for pair in &g.launch_env {
         if let Some((k, v)) = pair.split_once('=') {
             if !k.trim().is_empty() {
