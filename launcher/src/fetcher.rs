@@ -547,6 +547,74 @@ pub fn account_id(bearer: &str) -> Result<u64, String> {
     id.parse::<u64>().map_err(|e| format!("bad viewer id: {e}"))
 }
 
+/// GET a store REST endpoint that carries the bearer as access_token in the
+/// URL, parse the JSON body. store_err keeps the token-bearing URL out of
+/// error text.
+fn rest_get(url: &str) -> Result<Value, String> {
+    let resp = agent()
+        .get(url)
+        .set("User-Agent", UA)
+        .call()
+        .map_err(store_err)?;
+    let text = resp
+        .into_string()
+        .map_err(|_| "the store response could not be read".to_string())?;
+    serde_json::from_str(&text).map_err(|_| "the store response was not valid JSON".to_string())
+}
+
+/// Achievement definitions for an app (api_name + description) from the REST
+/// endpoint the official app uses; the user bearer suffices, no app secret.
+pub fn achievement_definitions(
+    bearer: &str,
+    app_id: &str,
+) -> Result<Vec<(String, String)>, String> {
+    let url = format!(
+        "https://graph.oculus.com/{app_id}/achievement_definitions?access_token={}&fields=api_name,description,id&limit=500",
+        bearer.trim()
+    );
+    let v = rest_get(&url)?;
+    let mut out = Vec::new();
+    if let Some(arr) = v["data"].as_array() {
+        for d in arr {
+            let api = d["api_name"].as_str().unwrap_or("").to_string();
+            if api.is_empty() {
+                continue;
+            }
+            let desc = d["description"].as_str().unwrap_or("").to_string();
+            out.push((api, desc));
+        }
+    }
+    Ok(out)
+}
+
+/// The viewer's unlocked achievements (api_name + app_id) so the game page can
+/// mark which definitions are already unlocked server-side.
+pub fn unlocked_achievements(bearer: &str, user_id: &str) -> Result<Vec<(String, String)>, String> {
+    let url = format!(
+        "https://graph.oculus.com/{user_id}/achievements?access_token={}&fields=api_name,app_id,is_unlocked,unlocked_time&limit=500",
+        bearer.trim()
+    );
+    let v = rest_get(&url)?;
+    let mut out = Vec::new();
+    if let Some(arr) = v["data"].as_array() {
+        for d in arr {
+            let api = d["api_name"].as_str().unwrap_or("").to_string();
+            if api.is_empty() {
+                continue;
+            }
+            let unlocked = d["is_unlocked"].as_bool().unwrap_or(false)
+                || d["unlocked_time"]
+                    .as_str()
+                    .map(|s| !s.is_empty())
+                    .unwrap_or(false);
+            if unlocked {
+                out.push((api, d["app_id"].as_str().unwrap_or("").to_string()));
+            }
+        }
+    }
+    Ok(out)
+}
+
 /// GitHub release list for the Proton GE / MelonLoader installers (public API,
 /// no auth; unauthenticated rate limit is fine for a handful of calls).
 /// `avoid` lists name fragments for other platforms' builds: store games are

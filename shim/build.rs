@@ -112,7 +112,7 @@ fn main() {
             // in the live trace). The id must reach the trace, not just the
             // call name; that is the future achievements section's feed.
             "ovr_Achievements_Unlock" => gen.push_str(
-                "#[no_mangle]\npub extern \"C\" fn ovr_Achievements_Unlock(id: *const u8) -> *mut u8 { record(&format!(\"ovr_Achievements_Unlock {}\", crate::cstr(id))); handle() }\n",
+                "#[no_mangle]\npub extern \"C\" fn ovr_Achievements_Unlock(id: *const u8) -> *mut u8 { let n = crate::cstr(id); crate::record_achievement(&n); record(&format!(\"ovr_Achievements_Unlock {n}\")); handle() }\n",
             ),
             "ovr_Leaderboard_Get" => gen.push_str(
                 "#[no_mangle]\npub extern \"C\" fn ovr_Leaderboard_Get() -> u64 { record(\"ovr_Leaderboard_Get\"); leaderboard_request(0x6AD44EF8) }\n",

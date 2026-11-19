@@ -312,6 +312,7 @@ type FetchSlot =
 /// Background result slots: the token used for the request travels with the
 /// result, so a stale answer from an old login can never merge into the new one.
 type ProbeSlot = std::sync::Arc<std::sync::Mutex<Option<(String, Result<u64, String>)>>>;
+type AchSlot = Slot<(Vec<(String, String)>, Vec<String>)>;
 type SizeSlot = std::sync::Arc<std::sync::Mutex<Option<(usize, Result<(usize, u64), String>)>>>;
 
 struct App {
@@ -357,6 +358,10 @@ struct App {
     /// token cannot mark the NEW token as verified.
     probe_slot: ProbeSlot,
     probe_inflight: bool,
+    ach_slot: AchSlot,
+    ach_inflight: bool,
+    ach_fetch_app: String,
+    ach_fetched_for: String,
     probe_token: String,
     verified_account: Option<u64>,
     /// Install popup: estimated size + destination before any bytes move.
@@ -1936,6 +1941,15 @@ fn entitlement_basis(entitled: bool) -> &'static str {
 fn apply_launch_tweak_env(cmd: &mut std::process::Command, g: &GameEntry) {
     let basis = entitlement_basis(g.entitled);
     cmd.env("IRIS_ENTITLEMENT", basis);
+    if !g.install_dir.is_empty() {
+        cmd.env(
+            "IRIS_ACHIEVEMENTS_LOG",
+            format!(
+                "{}/iris-achievements.log",
+                g.install_dir.trim_end_matches('/')
+            ),
+        );
+    }
     auth::log_line(&format!(
         "launch entitlement: {basis} ({})",
         if g.entitled {
@@ -2839,6 +2853,10 @@ impl App {
             ctx: None,
             probe_slot: std::sync::Arc::new(std::sync::Mutex::new(None)),
             probe_inflight: false,
+            ach_slot: std::sync::Arc::new(std::sync::Mutex::new(None)),
+            ach_inflight: false,
+            ach_fetch_app: String::new(),
+            ach_fetched_for: String::new(),
             probe_token: String::new(),
             verified_account: None,
             install_prompt: None,
@@ -2966,6 +2984,72 @@ impl App {
                 c.request_repaint();
             }
         });
+    }
+
+    /// Fetch achievement definitions + the viewer's unlocked achievements from
+    /// the store REST API in the background, mirroring the owned-apps fetch.
+    fn start_achievement_fetch(&mut self, app_id: String, meta_app_id: String) {
+        if self.session.token.is_empty() || meta_app_id.is_empty() || self.ach_inflight {
+            return;
+        }
+        let Some(uid) = self.verified_account else {
+            return;
+        };
+        self.ach_inflight = true;
+        self.ach_fetch_app = app_id;
+        self.ach_fetched_for = self.ach_fetch_app.clone();
+        *self.ach_slot.lock().unwrap() = None;
+        let token = self.session.token.clone();
+        let slot = self.ach_slot.clone();
+        let repaint = self.ctx.clone();
+        std::thread::spawn(move || {
+            let defs = fetcher::achievement_definitions(&token, &meta_app_id);
+            let server = fetcher::unlocked_achievements(&token, &uid.to_string())
+                .map(|v| {
+                    v.into_iter()
+                        .filter(|(_, app)| app == &meta_app_id || app.is_empty())
+                        .map(|(api, _)| api)
+                        .collect::<Vec<String>>()
+                })
+                .unwrap_or_default();
+            *slot.lock().unwrap() = Some(defs.map(|d| (d, server)));
+            if let Some(c) = repaint {
+                c.request_repaint();
+            }
+        });
+    }
+
+    /// Merge the achievement fetch result with the always-on local unlock log.
+    fn poll_achievements(&mut self) {
+        if !self.ach_inflight {
+            return;
+        }
+        let Some(res) = self.ach_slot.lock().unwrap().take() else {
+            return;
+        };
+        self.ach_inflight = false;
+        let app_id = self.ach_fetch_app.clone();
+        match res {
+            Ok((defs, server)) => {
+                let local = self
+                    .store
+                    .apps
+                    .iter()
+                    .find(|g| g.app_id == app_id)
+                    .map(|g| {
+                        if g.install_dir.is_empty() {
+                            Vec::new()
+                        } else {
+                            achievements::local_unlocks(std::path::Path::new(&g.install_dir))
+                        }
+                    })
+                    .unwrap_or_default();
+                let merged = achievements::merge_server(defs, &server, &local);
+                let _ = achievements::save(self.data_root(), &app_id, &merged);
+                self.status = format!("achievements: {} definitions loaded", merged.len());
+            }
+            Err(e) => self.status = format!("achievements fetch failed: {e}"),
+        }
     }
 
     /// Merge the account probe result.
@@ -6045,32 +6129,50 @@ impl App {
                 if g.meta_app_id.is_empty() {
                     ui.label(tr(&self.config, "card_folder_scan"));
                 }
-                let ids = achievements::collect(
-                    self.data_root(),
-                    Some(std::path::Path::new(&g.install_dir)),
-                );
-                if !ids.is_empty() {
-                    let _ = achievements::save(self.data_root(), &g.app_id, &ids);
+                let local = if g.install_dir.is_empty() {
+                    Vec::new()
+                } else {
+                    achievements::local_unlocks(std::path::Path::new(&g.install_dir))
+                };
+                let mut ach = achievements::load(self.data_root(), &g.app_id);
+                achievements::apply_local(&mut ach, &local);
+                if !self.session.token.is_empty()
+                    && !g.meta_app_id.is_empty()
+                    && self.verified_account.is_some()
+                    && self.ach_fetched_for != g.app_id
+                    && !self.ach_inflight
+                {
+                    self.start_achievement_fetch(g.app_id.clone(), g.meta_app_id.clone());
                 }
-                let ach = achievements::load(self.data_root(), &g.app_id);
+                ui.horizontal(|ui| {
+                    ui.label(tr(&self.config, "achievements_unlocked_label"));
+                    if ui
+                        .button(tr(&self.config, "achievements_refresh"))
+                        .clicked()
+                    {
+                        self.ach_fetched_for.clear();
+                        self.start_achievement_fetch(g.app_id.clone(), g.meta_app_id.clone());
+                    }
+                });
                 if ach.is_empty() {
                     ui.label(tr(&self.config, "achievements_note"));
                 } else {
-                    ui.label(format!(
-                        "{} {}",
-                        tr(&self.config, "achievements_unlocked_label"),
-                        ach.len()
-                    ));
-                    ui.label(tr(&self.config, "achievements_locked_unknown"));
+                    let unlocked = ach.iter().filter(|a| a.unlocked).count();
+                    ui.label(format!("{unlocked}/{}", ach.len()));
                     for a in &ach {
-                        let mut line = format!("✓ {}", a.id);
-                        if !a.name.is_empty() {
-                            line = format!("✓ {} — {}", a.id, a.name);
-                        }
-                        if !a.icon.is_empty() {
-                            line = format!("{} [{}]", line, a.icon);
-                        }
-                        ui.label(line);
+                        let text = if a.description.is_empty() {
+                            a.api_name.clone()
+                        } else {
+                            a.description.clone()
+                        };
+                        ui.colored_label(
+                            if a.unlocked {
+                                egui::Color32::from_rgb(120, 200, 120)
+                            } else {
+                                egui::Color32::from_rgb(150, 150, 150)
+                            },
+                            text,
+                        );
                     }
                 }
                 if let Some(desc) = self.update_available() {
@@ -6231,6 +6333,7 @@ impl eframe::App for App {
         }
         self.poll_fetch();
         self.poll_probe();
+        self.poll_achievements();
         self.poll_size();
         self.poll_download();
         self.poll_releases();

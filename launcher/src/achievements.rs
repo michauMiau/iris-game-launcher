@@ -1,14 +1,16 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct Achievement {
-    pub id: String,
+    #[serde(alias = "id")]
+    pub api_name: String,
+    #[serde(default, alias = "name")]
+    pub description: String,
     #[serde(default)]
-    pub name: String,
-    #[serde(default)]
-    pub icon: String,
+    pub unlocked: bool,
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -17,93 +19,97 @@ struct Store {
     achievements: Vec<Achievement>,
 }
 
-pub fn parse_unlock_lines(text: &str) -> Vec<String> {
+pub fn store_path(data_dir: &Path, app_id: &str) -> PathBuf {
+    data_dir.join("achievements").join(format!("{app_id}.json"))
+}
+
+/// Always-on unlock log the platform shim writes beside the game exe,
+/// independent of the opt-in trace radio.
+pub fn unlock_log_path(game_dir: &Path) -> PathBuf {
+    game_dir.join("iris-achievements.log")
+}
+
+pub fn load(data_dir: &Path, app_id: &str) -> Vec<Achievement> {
+    let Ok(s) = fs::read_to_string(store_path(data_dir, app_id)) else {
+        return Vec::new();
+    };
+    serde_json::from_str::<Store>(&s)
+        .map(|st| st.achievements)
+        .unwrap_or_default()
+}
+
+pub fn save(data_dir: &Path, app_id: &str, achs: &[Achievement]) -> std::io::Result<()> {
+    let dir = data_dir.join("achievements");
+    fs::create_dir_all(&dir)?;
+    let json = serde_json::to_string_pretty(&Store {
+        achievements: achs.to_vec(),
+    })
+    .unwrap_or_default();
+    fs::write(store_path(data_dir, app_id), json)
+}
+
+/// Read the shim's always-on unlock log: one api_name per line, deduped.
+pub fn local_unlocks(game_dir: &Path) -> Vec<String> {
+    let Ok(text) = fs::read_to_string(unlock_log_path(game_dir)) else {
+        return Vec::new();
+    };
     let mut out = Vec::new();
     for line in text.lines() {
-        if let Some(rest) = line.trim().strip_prefix("ovr_Achievements_Unlock") {
-            let id = rest.trim();
-            if !id.is_empty() && !out.contains(&id.to_string()) {
-                out.push(id.to_string());
-            }
+        let id = line.trim();
+        if !id.is_empty() && !out.contains(&id.to_string()) {
+            out.push(id.to_string());
         }
     }
     out
 }
 
-pub fn store_path(data_dir: &Path, app_id: &str) -> PathBuf {
-    data_dir.join("achievements").join(format!("{app_id}.json"))
-}
-
-pub fn load(data_dir: &Path, app_id: &str) -> Vec<Achievement> {
-    let p = store_path(data_dir, app_id);
-    let Ok(s) = fs::read_to_string(&p) else {
-        return Vec::new();
-    };
-    let Ok(store): Result<Store, _> = serde_json::from_str(&s) else {
-        return Vec::new();
-    };
-    store.achievements
-}
-
-pub fn save(data_dir: &Path, app_id: &str, ids: &[String]) -> std::io::Result<()> {
-    let dir = data_dir.join("achievements");
-    fs::create_dir_all(&dir)?;
-    // Names/icons from Meta-side metadata survive a re-save: entries that
-    // were recorded earlier keep their fetched metadata instead of being
-    // rewritten as bare ids.
-    let known = load(data_dir, app_id);
-    let mut entries: Vec<Achievement> = Vec::new();
-    for id in ids {
-        if let Some(old) = known.iter().find(|a| &a.id == id) {
-            entries.push(old.clone());
-        } else {
-            entries.push(Achievement {
-                id: id.clone(),
-                name: String::new(),
-                icon: String::new(),
+/// Mark cached achievements unlocked from the local log; add local unlocks
+/// that have no definition yet (offline play before a server fetch).
+pub fn apply_local(achs: &mut Vec<Achievement>, local: &[String]) {
+    let set: HashSet<&str> = local.iter().map(|s| s.as_str()).collect();
+    for a in achs.iter_mut() {
+        if set.contains(a.api_name.as_str()) {
+            a.unlocked = true;
+        }
+    }
+    for id in local {
+        if !achs.iter().any(|a| &a.api_name == id) {
+            achs.push(Achievement {
+                api_name: id.clone(),
+                description: String::new(),
+                unlocked: true,
             });
         }
     }
-    let store = Store {
-        achievements: entries,
-    };
-    let json = serde_json::to_string_pretty(&store).unwrap_or_default();
-    fs::write(store_path(data_dir, app_id), json)
 }
 
-/// Scan trace logs in game dir and data dir, collect unlock ids, persist.
-pub fn collect(data_dir: &Path, game_dir: Option<&Path>) -> Vec<String> {
-    let mut ids = Vec::new();
-    let mut candidates: Vec<PathBuf> = Vec::new();
-    if let Some(gd) = game_dir {
-        // Both shim traces live beside the exe: the platform shim's file and
-        // the plugin shim's distinct file.
-        candidates.push(gd.join("iris-shim-trace.log"));
-        candidates.push(gd.join("iris-ovrplugin-trace.log"));
-    }
-    candidates.push(data_dir.join("iris-shim-trace.log"));
-    // also any in data dir root? scan one level
-    if let Ok(entries) = fs::read_dir(data_dir) {
-        for e in entries.flatten() {
-            let p = e.path();
-            if p.is_file()
-                && p.file_name()
-                    .and_then(|s| s.to_str())
-                    .map(|s| s.contains("trace"))
-                    .unwrap_or(false)
-            {
-                candidates.push(p);
-            }
+/// Build the display list from server definitions plus the unlocked sets.
+pub fn merge_server(
+    defs: Vec<(String, String)>,
+    server_unlocked: &[String],
+    local: &[String],
+) -> Vec<Achievement> {
+    let unlocked: HashSet<&str> = server_unlocked
+        .iter()
+        .chain(local.iter())
+        .map(|s| s.as_str())
+        .collect();
+    let mut out: Vec<Achievement> = defs
+        .into_iter()
+        .map(|(api, desc)| Achievement {
+            unlocked: unlocked.contains(api.as_str()),
+            api_name: api,
+            description: desc,
+        })
+        .collect();
+    for id in local.iter().chain(server_unlocked.iter()) {
+        if !out.iter().any(|a| &a.api_name == id) {
+            out.push(Achievement {
+                api_name: id.clone(),
+                description: String::new(),
+                unlocked: true,
+            });
         }
     }
-    for c in candidates {
-        if let Ok(text) = fs::read_to_string(&c) {
-            for id in parse_unlock_lines(&text) {
-                if !ids.contains(&id) {
-                    ids.push(id);
-                }
-            }
-        }
-    }
-    ids
+    out
 }

@@ -398,3 +398,29 @@ fn melon_asset_picker_never_selects_installer_exe() {
         .expect("a zip must be picked");
     assert_eq!(picked["name"].as_str().unwrap(), "MelonLoader.x64.zip");
 }
+
+#[test]
+#[ignore = "manual smoke: needs a logged-in session.json and network"]
+fn live_achievement_fetch() {
+    let home = std::env::var("HOME").unwrap();
+    let sess: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(format!("{home}/.local/share/iris-launcher/session.json"))
+            .unwrap(),
+    )
+    .unwrap();
+    let token = sess["token"].as_str().unwrap();
+    let defs = achievement_definitions(token, "5088709007839657").unwrap();
+    assert!(
+        !defs.is_empty(),
+        "Bonelab should have achievement definitions"
+    );
+    assert!(defs.iter().any(|(api, _)| api == "ACH_THREEGUN"));
+    let uid = account_id(token).unwrap();
+    let unlocked = unlocked_achievements(token, &uid.to_string()).unwrap();
+    eprintln!(
+        "defs={} first={:?} unlocked={}",
+        defs.len(),
+        defs.first(),
+        unlocked.len()
+    );
+}

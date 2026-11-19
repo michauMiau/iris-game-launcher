@@ -106,6 +106,22 @@ fn record(name: &str) {
     let _ = writeln!(f.lock().unwrap(), "{} {}", now_ms(), name);
 }
 
+/// Persist an achievement unlock to the launcher's always-on unlock log,
+/// independent of the opt-in trace. The launcher sets IRIS_ACHIEVEMENTS_LOG
+/// beside the game exe; the achievements section reads it without the trace
+/// radio. FFI-safe: an unwritable path silently skips, the game keeps running.
+pub(crate) fn record_achievement(name: &str) {
+    if name.is_empty() {
+        return;
+    }
+    let Ok(path) = std::env::var("IRIS_ACHIEVEMENTS_LOG") else {
+        return;
+    };
+    if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(&path) {
+        let _ = writeln!(f, "{name}");
+    }
+}
+
 fn init() {}
 
 static REQUEST_ID: AtomicU32 = AtomicU32::new(1);
