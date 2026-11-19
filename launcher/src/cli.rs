@@ -71,7 +71,7 @@ pub fn dispatch(args: &[String]) -> bool {
     }
     if args.get(1).map(|a| a == "--download").unwrap_or(false) {
         let Some(id) = args.get(2) else {
-            println!("usage: --download <meta app id>");
+            println!("usage: --download <store app id>");
             return true;
         };
         let mut app = App::new(false);

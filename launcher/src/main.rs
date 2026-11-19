@@ -369,6 +369,8 @@ struct App {
     proton_popup: bool,
     /// The bearer token field is masked until this is pressed.
     token_revealed: bool,
+    /// The account id label is masked until this is pressed.
+    account_id_revealed: bool,
     size_slot: SizeSlot,
     disk_sizes: std::collections::HashMap<String, u64>,
     disk_pending: Option<String>,
@@ -530,6 +532,15 @@ fn data_dir() -> PathBuf {
         })
     };
     parent.join("iris-launcher")
+}
+
+/// Account id is masked by default; reveal shows the number the store reports.
+pub(crate) fn account_id_label(id: u64, revealed: bool) -> String {
+    if revealed {
+        format!("account id: {id} (the store only reports this number)")
+    } else {
+        "account id: hidden".to_string()
+    }
 }
 
 fn token_kind(tok: &str) -> &'static str {
@@ -2814,6 +2825,7 @@ impl App {
             #[cfg(not(target_os = "windows"))]
             proton_popup: false,
             token_revealed: false,
+            account_id_revealed: false,
             size_slot: std::sync::Arc::new(std::sync::Mutex::new(None)),
             disk_sizes: std::collections::HashMap::new(),
             disk_pending: None,
@@ -2957,7 +2969,7 @@ impl App {
         match res {
             Ok(id) => {
                 self.verified_account = Some(id);
-                auth::log_line(&format!("account probe OK: {id}"));
+                auth::log_line("account probe OK");
                 self.status = "login confirmed — the token still works".into();
             }
             Err(e) => {
@@ -6754,7 +6766,15 @@ impl eframe::App for App {
                             }
                         });
                         if let Some(id) = self.verified_account {
-                            ui.label(format!("account id: {id} (the store only reports this number)"));
+                            ui.horizontal(|ui| {
+                                ui.label(account_id_label(id, self.account_id_revealed));
+                                if ui
+                                    .button(if self.account_id_revealed { "hide" } else { "reveal" })
+                                    .clicked()
+                                {
+                                    self.account_id_revealed = !self.account_id_revealed;
+                                }
+                            });
                         }
                     });
                     #[cfg(target_os = "windows")]
@@ -6773,12 +6793,12 @@ impl eframe::App for App {
                                     self.find_revive_layer();
                                 }
                             });
-                            ui.label(tr(&self.config, "revive_meta_hint"));
+                            ui.label(tr(&self.config, "revive_vendor_hint"));
                             ui.horizontal(|ui| {
-                                if ui.button(tr(&self.config, "revive_meta_takeover")).clicked() {
+                                if ui.button(tr(&self.config, "revive_vendor_takeover")).clicked() {
                                     self.take_meta_runtime();
                                 }
-                                if ui.button(tr(&self.config, "revive_meta_revert")).clicked() {
+                                if ui.button(tr(&self.config, "revive_vendor_revert")).clicked() {
                                     self.restore_meta_runtime();
                                 }
                             });

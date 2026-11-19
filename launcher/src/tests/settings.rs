@@ -359,3 +359,19 @@ fn index_keyed_popups_reset_when_library_shrinks() {
         assert!(app.game_proton_popup.is_none());
     }
 }
+
+#[test]
+fn account_id_is_masked_until_revealed() {
+    let id = 1234567890u64;
+    let masked = account_id_label(id, false);
+    assert!(
+        !masked.contains("1234567890"),
+        "masked account id label leaks the number: {masked}"
+    );
+    assert!(masked.contains("hidden"));
+    let shown = account_id_label(id, true);
+    assert!(
+        shown.contains("1234567890"),
+        "revealed account id label must show the number"
+    );
+}
