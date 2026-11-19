@@ -80,7 +80,7 @@ static NULL_POLLS: AtomicU32 = AtomicU32::new(0);
 fn record_pop(msg: *mut Msg) {
     if msg.is_null() {
         let n = NULL_POLLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
-        if n % 200 == 0 {
+        if n.is_multiple_of(200) {
             record(&format!("idle-polls {} (game thread alive, nothing queued)", n));
         }
         return;
@@ -122,7 +122,7 @@ fn entitlement_basis() -> &'static str {
     }
 }
 
-fn entitlement_request() -> u32 {
+fn entitlement_request() -> u64 {
     let id = REQUEST_ID.fetch_add(1, Ordering::SeqCst);
     record(&format!("entitlement granted: {} ownership", entitlement_basis()));
     let msg = Box::new(Msg {
@@ -134,7 +134,22 @@ fn entitlement_request() -> u32 {
     if let Ok(mut q) = queue().lock() {
         q.push_back(msg);
     }
-    id
+    id as u64
+}
+
+/// Queue a leaderboard result carrying an empty payload and return its request
+/// id (ovrRequest is u64). The array/status getters all answer empty (size 0,
+/// total 0, didUpdate false), so the leaderboard UI renders empty instead of
+/// crashing. Offline, no vendor service; msg_type is the SDK hash so the game
+/// recognises the result.
+fn leaderboard_request(msg_type: u32) -> u64 {
+    let id = REQUEST_ID.fetch_add(1, Ordering::SeqCst);
+    let msg = Box::new(Msg { msg_type, is_error: false, entitled: false, id });
+    if let Ok(mut q) = queue().lock() {
+        q.push_back(msg);
+    }
+    record(&format!("leaderboard request type={msg_type:08X} id={id} (empty payload)"));
+    id as u64
 }
 
 fn pop_message() -> *mut Msg {
@@ -146,8 +161,8 @@ fn pop_message() -> *mut Msg {
     std::ptr::null_mut()
 }
 
-fn msg_id(msg: *mut Msg) -> u32 {
-    if msg.is_null() { 0 } else { unsafe { (*msg).id } }
+fn msg_id(msg: *mut Msg) -> u64 {
+    if msg.is_null() { 0 } else { unsafe { (*msg).id as u64 } }
 }
 
 fn msg_type(msg: *mut Msg) -> u32 {
