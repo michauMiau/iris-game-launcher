@@ -17,6 +17,7 @@ fn stub(n: &str, kind: &str) -> String {
         "i32" => format!("#[no_mangle]\npub extern \"C\" fn {n}() -> i32 {{ record(\"{n}\"); 0 }}\n"),
         "bool" => format!("#[no_mangle]\npub extern \"C\" fn {n}() -> bool {{ record(\"{n}\"); false }}\n"),
         "f32" => format!("#[no_mangle]\npub extern \"C\" fn {n}() -> f32 {{ record(\"{n}\"); 0.0 }}\n"),
+        "f64" => format!("#[no_mangle]\npub extern \"C\" fn {n}() -> f64 {{ record(\"{n}\"); 0.0 }}\n"),
         _ => format!("#[no_mangle]\npub extern \"C\" fn {n}() -> *mut u8 {{ record(\"{n}\"); handle() }}\n"),
     }
 }
